@@ -1,0 +1,13 @@
+# Build artifacts
+bin/
+obj/
+*.user
+
+# IDE / tooling local files
+.claude/settings.local.json
+.vs/
+.vscode/
+
+# OS files
+Thumbs.db
+.DS_Store
