@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\CodeDetector.cs" Link="CodeDetector.cs" />
+    <Compile Include="..\ClipboardClearPolicy.cs" Link="ClipboardClearPolicy.cs" />
   </ItemGroup>
 </Project>

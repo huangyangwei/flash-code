@@ -51,4 +51,21 @@ var g4 = det2.Analyze(new List<string>());                     // 消失
 var g5 = det2.Analyze(new List<string> { "SAT033" });          // 冷却期内重现 -> 不触发
 bool grabOk = g1 == null && g2 == "SAT033" && g3 == null && g4 == null && g5 == null;
 Console.WriteLine(grabOk ? "PASS  启动即抓" : $"FAIL  启动即抓: {g1},{g2},{g3},{g4},{g5}");
-Environment.Exit(fail == 0 && dupOk && grabOk ? 0 : 1);
+// 剪贴板自动清空判定（纯函数，不触碰剪贴板 API）
+var scCases = new (string name, string? written, string? current, bool elapsed, bool want)[]
+{
+    ("内容一致 + 到期 -> 清空",   "ASD123", "ASD123",   true,  true),
+    ("内容已变 -> 保留不动",      "ASD123", "别的文字", true,  false),
+    ("未到期 -> 不清",            "ASD123", "ASD123",   false, false),
+    ("written 为 null -> 不清",   null,     "ASD123",   true,  false),
+};
+int scPass = 0;
+foreach (var (name, written, current, elapsed, want) in scCases)
+{
+    var got = ClipboardClearPolicy.ShouldClear(written, current, elapsed);
+    if (got == want) { scPass++; Console.WriteLine($"PASS  {name}"); }
+    else Console.WriteLine($"FAIL  {name}: got {got}, want {want}");
+}
+Console.WriteLine($"\n{scPass}/{scCases.Length} ShouldClear 断言通过");
+
+Environment.Exit(fail == 0 && dupOk && grabOk && scPass == scCases.Length ? 0 : 1);
