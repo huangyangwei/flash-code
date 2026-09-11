@@ -122,6 +122,18 @@ public sealed class MainForm : Form
         _engineKind.SelectedIndex = _config.OcrEngine == OcrEngineKind.Paddle ? 1 : 0;
         _engineKind.SelectedIndexChanged += (_, _) => OnEngineKindChanged();
 
+        var lblClipClear = new Label { Text = "清空剪贴板(秒):", Location = new Point(460, 158), AutoSize = true };
+        var clipClear = new NumericUpDown
+        {
+            Location = new Point(566, 154), Width = 60,
+            Minimum = 0, Maximum = 3600, Value = _config.ClipboardClearSeconds,
+        };
+        clipClear.ValueChanged += (_, _) =>
+        {
+            _config.ClipboardClearSeconds = (int)clipClear.Value;
+            _config.Save();
+        };
+
         _ocrBox = new TextBox
         {
             Location = new Point(16, 205),
@@ -137,7 +149,7 @@ public sealed class MainForm : Form
             lblCode, _codeLabel, _latencyLabel, _statusLabel,
             _toggleButton, selectButton, lblCooldown, _cooldown, lblInterval, _interval, soundCheck,
             lblConfirm, _confirm, lblScale, _scale,
-            lblOcr, _ocrBox, grabOnStartCheck, lblEngine, _engineKind,
+            lblOcr, _ocrBox, grabOnStartCheck, lblEngine, _engineKind, lblClipClear, clipClear,
         });
 
         // 托盘图标

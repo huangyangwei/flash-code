@@ -224,7 +224,7 @@ public sealed class CaptureEngine : IDisposable
         var trigger = _detector.Analyze(codes);
         if (trigger != null)
         {
-            ClipboardService.SetText(trigger);
+            ClipboardService.SetTextWithAutoClear(trigger, _config.ClipboardClearSeconds);
             CodeGrabbed?.Invoke(trigger, sw.Elapsed.TotalMilliseconds);
         }
     }

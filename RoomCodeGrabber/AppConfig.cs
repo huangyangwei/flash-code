@@ -29,6 +29,9 @@ public sealed class AppConfig
     // 预处理放大倍数。3x 在测试截图上全命中；码特别小可调 4，追求低延迟可调 2
     public int ScaleFactor { get; set; } = 3;
 
+    // 复制成功后多少秒自动清空剪贴板（0 = 禁用）。仅在内容仍是程序写入的房间码时才清。
+    public int ClipboardClearSeconds { get; set; } = 180;
+
     // OCR 引擎选择。Windows = 系统自带（零依赖，任何机器可用，默认）；
     // Paddle = PaddleOCR GPU（需 NVIDIA 独显 + sm_120 CUDA runtime，识别率更高，用于对比切换）
     public OcrEngineKind OcrEngine { get; set; } = OcrEngineKind.Windows;
