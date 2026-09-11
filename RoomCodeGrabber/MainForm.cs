@@ -163,6 +163,10 @@ public sealed class MainForm : Form
         {
             MessageBox.Show(_engine.InitError, "OCR 不可用", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+        else if (_engine.InitWarning != null)
+        {
+            MessageBox.Show(_engine.InitWarning, "OCR 识别率提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
 
         if (_config.Region == null)
         {
