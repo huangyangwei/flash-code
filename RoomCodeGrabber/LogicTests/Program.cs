@@ -68,4 +68,13 @@ foreach (var (name, written, current, elapsed, want) in scCases)
 }
 Console.WriteLine($"\n{scPass}/{scCases.Length} ShouldClear 断言通过");
 
-Environment.Exit(fail == 0 && dupOk && grabOk && scPass == scCases.Length ? 0 : 1);
+// 不变量：Analyze 触发后立刻标记 _fired——调用方若丢弃返回值，码就被"吃掉"
+//（CaptureEngine 的静止画面分支曾踩这个坑：调了 Analyze 却把返回值丢掉）
+var det3 = new CodeDetector(30, 1, grabOnStart: true);
+var e1 = det3.Analyze(new List<string> { "OZB459" });   // 首帧只记录
+var e2 = det3.Analyze(new List<string> { "OZB459" });   // 第 2 帧触发
+var e3 = det3.Analyze(new List<string> { "OZB459" });   // 已触发：不再重复（哪怕画面没变）
+bool fireOk = e1 == null && e2 == "OZB459" && e3 == null;
+Console.WriteLine(fireOk ? "PASS  触发即标记（丢弃返回值会吃掉码）" : $"FAIL  触发标记: {e1},{e2},{e3}");
+
+Environment.Exit(fail == 0 && dupOk && grabOk && scPass == scCases.Length && fireOk ? 0 : 1);

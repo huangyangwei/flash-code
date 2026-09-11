@@ -113,22 +113,28 @@ public sealed class CaptureEngine : IDisposable
         var t = _thread;
         if (t == null)
         {
-            _detector.Reset();
-            _prevCodes.Clear();
+            ResetDetectorState();
             return true;
         }
         // Loop 会在当前帧处理完后检查 _running 退出；Paddle 单帧可达数百 ms，给足 10s。
         bool exited = t.Join(TimeSpan.FromSeconds(10));
         if (exited) _thread = null;   // 确认退出才清引用；未退出则保留，供 Start() 拒绝启动
-        _detector.Reset();
-        _prevCodes.Clear();
+        ResetDetectorState();
         return exited;
     }
 
-    public void ResetDetector()
+    public void ResetDetector() => ResetDetectorState();
+
+    /// <summary>
+    /// 清空"上一帧"状态，让下次 Start 的首帧必定重新 OCR。
+    /// <c>_prevGray</c> 必须一起清：留着它会让重启后的首帧被判成"静止"而跳过 OCR，
+    /// 而此时 <c>_prevCodes</c> 已空，静止分支只会空转——画面一静止就再也识别不出东西。
+    /// </summary>
+    private void ResetDetectorState()
     {
         _detector.Reset();
         _prevCodes.Clear();
+        _prevGray = null;
     }
 
     /// <summary>按当前配置重建 OCR 引擎（切换引擎后即时生效，无需重启）。</summary>
@@ -200,7 +206,10 @@ public sealed class CaptureEngine : IDisposable
         // ---- 3. 变化检测：与上一帧抽样对比，静止画面跳过 OCR ----
         if (_prevGray != null && IsSameFrame(gray))
         {
-            _detector.Analyze(_prevCodes); // 维持上一帧的可见码状态（不产生新触发）
+            // 静止画面同样要走判定。Analyze 内部会无条件把码标进 _fired，
+            // 丢掉它的返回值不仅让静止画面上的码抓不到，还会把码"吃掉"
+            // （要等它消失再出现才有下一次机会）。_fired 已保证不会重复触发。
+            FireIfTriggered(_prevCodes, sw);
             return;
         }
         Array.Copy(gray, _prevGray!, gray.Length);
@@ -221,12 +230,16 @@ public sealed class CaptureEngine : IDisposable
         // ---- 5. 码判定 + 剪贴板 ----
         var codes = CodeDetector.ExtractCodes(text);
         _prevCodes = codes;
+        FireIfTriggered(codes, sw);
+    }
+
+    /// <summary>码判定 → 写剪贴板 → 通知 UI。变化帧与静止帧共走这一条，免得两条路径行为分叉。</summary>
+    private void FireIfTriggered(List<string> codes, Stopwatch sw)
+    {
         var trigger = _detector.Analyze(codes);
-        if (trigger != null)
-        {
-            ClipboardService.SetTextWithAutoClear(trigger, _config.ClipboardClearSeconds);
-            CodeGrabbed?.Invoke(trigger, sw.Elapsed.TotalMilliseconds);
-        }
+        if (trigger == null) return;
+        ClipboardService.SetTextWithAutoClear(trigger, _config.ClipboardClearSeconds);
+        CodeGrabbed?.Invoke(trigger, sw.Elapsed.TotalMilliseconds);
     }
 
     private bool IsSameFrame(byte[] gray)
