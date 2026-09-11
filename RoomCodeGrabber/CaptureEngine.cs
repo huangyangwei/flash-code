@@ -87,6 +87,9 @@ public sealed class CaptureEngine : IDisposable
     {
         if (_running || InitError != null) return;
         if (_config.Region == null) return;
+        // 防御：上一个线程若尚未退出（StopThread 超时），拒绝启动，避免两个 Loop 并发
+        // 共享无锁的 _captureBmp/_prevGray/_detector。
+        if (_thread is { IsAlive: true }) return;
         _running = true;
         _thread = new Thread(Loop)
         {
@@ -97,13 +100,29 @@ public sealed class CaptureEngine : IDisposable
         _thread.Start();
     }
 
-    public void Stop()
+    /// <summary>停止抓帧线程（保留引擎）。</summary>
+    public void Stop() => StopThread();
+
+    /// <summary>
+    /// 停止抓帧线程。返回 true 表示线程已确认退出——<b>只有此时才可安全释放 _ocr</b>；
+    /// 否则抓帧线程可能仍停在 Recognize() 内，dispose 引擎会造成 use-after-dispose（原生资源竞态）。
+    /// </summary>
+    private bool StopThread()
     {
         _running = false;
-        _thread?.Join(500);
-        _thread = null;
+        var t = _thread;
+        if (t == null)
+        {
+            _detector.Reset();
+            _prevCodes.Clear();
+            return true;
+        }
+        // Loop 会在当前帧处理完后检查 _running 退出；Paddle 单帧可达数百 ms，给足 10s。
+        bool exited = t.Join(TimeSpan.FromSeconds(10));
+        if (exited) _thread = null;   // 确认退出才清引用；未退出则保留，供 Start() 拒绝启动
         _detector.Reset();
         _prevCodes.Clear();
+        return exited;
     }
 
     public void ResetDetector()
@@ -112,11 +131,19 @@ public sealed class CaptureEngine : IDisposable
         _prevCodes.Clear();
     }
 
-    /// <summary>按当前配置重建 OCR 引擎（切换引擎后即时生效，无需重启）。停-重建-启，保证线程安全。</summary>
+    /// <summary>按当前配置重建 OCR 引擎（切换引擎后即时生效，无需重启）。</summary>
     public void ReinitializeOcr()
     {
         bool wasRunning = _running;
-        Stop();
+
+        // 关键顺序：先确认抓帧线程已退出，再 dispose 引擎——否则线程可能仍停在 Recognize()
+        // 内使用它（use-after-dispose）。超时未退出则放弃本次切换，避免原生资源竞态。
+        if (!StopThread())
+        {
+            InitError = "抓帧线程未能在超时内停止，已取消本次 OCR 引擎切换（请重试）。";
+            return;
+        }
+
         _ocr?.Dispose();
         _ocr = null;
         InitError = null;
@@ -165,8 +192,8 @@ public sealed class CaptureEngine : IDisposable
                 CopyPixelOperation.SourceCopy);
         }
 
-        // ---- 2. 预处理（仅供变化检测用；OCR 引擎会各自做自己的预处理）----
-        var gray = _preprocessor.Process(_captureBmp!, out _, out _);
+        // ---- 2. 预处理（变化检测用；同时复用给能接受它的引擎，避免每帧两次预处理）----
+        var gray = _preprocessor.Process(_captureBmp!, out int gw2, out int gh2);
         if (_prevGray == null || _prevGray.Length != gray.Length)
             _prevGray = new byte[gray.Length];
 
@@ -178,11 +205,11 @@ public sealed class CaptureEngine : IDisposable
         }
         Array.Copy(gray, _prevGray!, gray.Length);
 
-        // ---- 4. OCR（传原始裁剪图，由引擎自行预处理）----
+        // ---- 4. OCR（传原图 + 预处理图；Windows 引擎复用后者，Paddle 用原图）----
         string text;
         try
         {
-            text = _ocr!.Recognize(_captureBmp!);
+            text = _ocr!.Recognize(_captureBmp!, gray, gw2, gh2);
         }
         catch
         {
@@ -229,7 +256,12 @@ public sealed class CaptureEngine : IDisposable
 
     public void Dispose()
     {
-        Stop();
+        // 线程已退出才释放引擎（含 PaddleOCR 的 CUDA 上下文）；未退出则宁可不释放，也不冒竞态风险
+        if (StopThread())
+        {
+            _ocr?.Dispose();
+            _ocr = null;
+        }
         _captureBmp?.Dispose();
     }
 }

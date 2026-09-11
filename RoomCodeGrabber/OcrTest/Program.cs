@@ -5,11 +5,17 @@ using Windows.Globalization;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 
-// 用法 1: dotnet run                      -> 全管线扫描（裁剪 x 倍数）
+// 用法 1: dotnet run                      -> 全管线扫描（裁剪 x 倍数，需真实截图）
 // 用法 2: dotnet run -- dump <scale> <x> <y> <w> <h> <out.png> -> 导出预处理图
+// 用法 3: dotnet run -- engine            -> 引擎端到端 smoke（合成图，不依赖外部截图）
 if (args.Length > 0 && args[0] == "dump")
 {
     DumpPreprocessed(args[1..]);
+    return;
+}
+if (args.Length > 0 && args[0] == "engine")
+{
+    EngineSmoke();
     return;
 }
 
@@ -90,4 +96,55 @@ static void DumpPreprocessed(string[] a)
     }
     canvas.Save(a[6], System.Drawing.Imaging.ImageFormat.Png);
     Console.WriteLine($"已保存 {a[6]} (上:原图放大 下:预处理后)");
+}
+
+// 引擎端到端 smoke：不依赖外部截图，用抗锯齿合成图验证 WindowsOcrEngine 封装。
+// 覆盖两条路径——引擎自行预处理（preparedGray=null）与复用调用方预处理图（preparedGray!=null）。
+static void EngineSmoke()
+{
+    Console.OutputEncoding = System.Text.Encoding.UTF8;
+    var engine = new WindowsOcrEngine(3);
+    Console.WriteLine($"引擎: {engine.Name}");
+    if (engine.Warning != null) Console.WriteLine($"警告(首行): {engine.Warning.Split('\n')[0]}");
+
+    int pass = 0, total = 0;
+    foreach (var (code, font) in new[] { ("OZB459", "Consolas"), ("ASD123", "Consolas"), ("OZB459", "Arial"), ("SAT033", "Arial") })
+    {
+        using var bmp = RenderCode(code, 40, font);
+        var text = engine.Recognize(bmp, null, 0, 0);   // 引擎自行预处理
+        var got = CodeDetector.ExtractCodes(text.ToUpperInvariant());
+        bool hit = got.Contains(code);
+        total++; if (hit) pass++;
+        Console.WriteLine($"{(hit ? "PASS" : "FAIL")}  {code}/{font}  -> 原文 \"{text}\"  提取 [{string.Join(",", got)}]");
+    }
+
+    // 复用调用方预处理图路径：结果应与引擎自行预处理一致（Finding 2 修复不改变识别结果）
+    using (var bmp = RenderCode("OZB459", 40, "Consolas"))
+    {
+        var pre = new Preprocessor(3);
+        var gray = pre.Process(bmp, out int pw, out int ph);
+        var text2 = engine.Recognize(bmp, gray, pw, ph);
+        var got2 = CodeDetector.ExtractCodes(text2.ToUpperInvariant());
+        bool hit2 = got2.Contains("OZB459");
+        total++; if (hit2) pass++;
+        Console.WriteLine($"{(hit2 ? "PASS" : "FAIL")}  OZB459/Consolas(复用预处理图)  -> 原文 \"{text2}\"");
+    }
+
+    Console.WriteLine($"\n{pass}/{total} 命中");
+    engine.Dispose();
+    Environment.Exit(pass == total ? 0 : 1);
+}
+
+static Bitmap RenderCode(string code, int fontPx, string font)
+{
+    int h = (int)(fontPx * 1.6);
+    int w = (int)(fontPx * code.Length * 0.8) + fontPx;
+    var bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+    using var g = Graphics.FromImage(bmp);
+    g.Clear(Color.White);
+    g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+    using var f = new Font(font, fontPx, FontStyle.Regular, GraphicsUnit.Pixel);
+    var sz = g.MeasureString(code, f);
+    g.DrawString(code, f, Brushes.Black, (w - sz.Width) / 2f, (h - sz.Height) / 2f);
+    return bmp;
 }

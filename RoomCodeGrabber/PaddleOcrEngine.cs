@@ -26,23 +26,35 @@ public sealed class PaddleOcrEngine : IOcrEngine
     public PaddleOcrEngine()
     {
         var model = LocalFullModels.EnglishV5;
-        _rec = new PaddleOcrRecognizer(model.RecognizationModel, PaddleDevice.Gpu());
-        Warmup();
+        var rec = new PaddleOcrRecognizer(model.RecognizationModel, PaddleDevice.Gpu());
+        try
+        {
+            Warmup(rec);
+        }
+        catch
+        {
+            // 预热失败也必须释放已分配的 recognizer（含 CUDA 上下文），
+            // 否则每次回退/切换都泄漏一份原生资源，反复切换累积显存占用。
+            rec.Dispose();
+            throw;
+        }
+        _rec = rec;
     }
 
     public string Name => "PaddleOCR (GPU)";
 
     /// <summary>预热：跑一次空图，预建 CUDA 上下文并加载模型权重。</summary>
-    private void Warmup()
+    private static void Warmup(PaddleOcrRecognizer rec)
     {
         using var bmp = new Bitmap(64, 32, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(bmp)) g.Clear(Color.White);
         using var mat = BitmapToMat(bmp);
-        _rec.Run(mat);
+        rec.Run(mat);
     }
 
-    public string Recognize(Bitmap source)
+    public string Recognize(Bitmap source, byte[]? preparedGray, int preparedWidth, int preparedHeight)
     {
+        // 忽略 preparedGray：PaddleOCR 自带归一化，喂二值化的图反而会伤害它，始终用原图
         using var mat = BitmapToMat(source);
         return _rec.Run(mat).Text ?? "";
     }

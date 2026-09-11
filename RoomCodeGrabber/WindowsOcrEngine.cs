@@ -58,9 +58,21 @@ public sealed class WindowsOcrEngine : IOcrEngine
 
     public string Name => $"Windows.Media.Ocr ({_ocr.RecognizerLanguage.LanguageTag})";
 
-    public string Recognize(Bitmap source)
+    public string Recognize(Bitmap source, byte[]? preparedGray, int preparedWidth, int preparedHeight)
     {
-        var gray = _pre.Process(source, out int w, out int h);
+        // 复用调用方已算好的预处理图，省掉一次放大 + Otsu；preparedGray 为 null 时自行预处理
+        byte[] gray;
+        int w, h;
+        if (preparedGray != null)
+        {
+            gray = preparedGray;
+            w = preparedWidth;
+            h = preparedHeight;
+        }
+        else
+        {
+            gray = _pre.Process(source, out w, out h);
+        }
         using var software = SoftwareBitmap.CreateCopyFromBuffer(
             gray.AsBuffer(), BitmapPixelFormat.Gray8, w, h);
         return _ocr.RecognizeAsync(software).AsTask().GetAwaiter().GetResult().Text;

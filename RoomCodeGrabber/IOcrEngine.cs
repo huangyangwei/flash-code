@@ -19,5 +19,13 @@ public interface IOcrEngine : IDisposable
     /// <summary>
     /// 识别一张裁剪位图，返回原始文本（未做房间码格式纠正，由 <see cref="CodeDetector"/> 处理）。
     /// </summary>
-    string Recognize(Bitmap source);
+    /// <param name="source">原始裁剪位图（未预处理）。</param>
+    /// <param name="preparedGray">
+    /// 调用方已算好的预处理灰度图（放大 + 二值化 + 反色，黑字白底），可能为 null。
+    /// 复用它可省一次预处理；需要彩色原图的引擎（如 PaddleOCR）可忽略。
+    /// <b>该缓冲由调用方复用，引擎只能在本调用内使用，不得长期持有。</b>
+    /// </param>
+    /// <param name="preparedWidth">preparedGray 的宽度。</param>
+    /// <param name="preparedHeight">preparedGray 的高度。</param>
+    string Recognize(Bitmap source, byte[]? preparedGray, int preparedWidth, int preparedHeight);
 }

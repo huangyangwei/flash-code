@@ -10,5 +10,7 @@
   <ItemGroup>
     <Compile Include="..\Preprocessor.cs" Link="Preprocessor.cs" />
     <Compile Include="..\CodeDetector.cs" Link="CodeDetector.cs" />
+    <Compile Include="..\IOcrEngine.cs" Link="IOcrEngine.cs" />
+    <Compile Include="..\WindowsOcrEngine.cs" Link="WindowsOcrEngine.cs" />
   </ItemGroup>
 </Project>
