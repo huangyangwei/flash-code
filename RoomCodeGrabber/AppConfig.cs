@@ -29,6 +29,10 @@ public sealed class AppConfig
     // 预处理放大倍数。3x 在测试截图上全命中；码特别小可调 4，追求低延迟可调 2
     public int ScaleFactor { get; set; } = 3;
 
+    // OCR 引擎选择。Windows = 系统自带（零依赖，任何机器可用，默认）；
+    // Paddle = PaddleOCR GPU（需 NVIDIA 独显 + sm_120 CUDA runtime，识别率更高，用于对比切换）
+    public OcrEngineKind OcrEngine { get; set; } = OcrEngineKind.Windows;
+
     // 抓到码时是否提示音
     public bool SoundEnabled { get; set; } = true;
 
@@ -64,4 +68,11 @@ public sealed class AppConfig
         var options = new JsonSerializerOptions { WriteIndented = true };
         File.WriteAllText(FilePath, JsonSerializer.Serialize(this, options));
     }
+}
+
+/// <summary>OCR 引擎种类。JSON 中按整数值持久化（Windows=0, Paddle=1）。</summary>
+public enum OcrEngineKind
+{
+    Windows,
+    Paddle,
 }

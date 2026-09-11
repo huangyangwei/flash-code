@@ -24,6 +24,7 @@ public sealed class MainForm : Form
     private readonly NumericUpDown _interval;
     private readonly NumericUpDown _confirm;
     private readonly NumericUpDown _scale;
+    private readonly ComboBox _engineKind;
 
     public MainForm(AppConfig config, CaptureEngine engine)
     {
@@ -110,6 +111,17 @@ public sealed class MainForm : Form
             if (_engine.Running) { _engine.Stop(); _engine.Start(); }
         };
 
+        var lblEngine = new Label { Text = "OCR 引擎:", Location = new Point(200, 158), AutoSize = true };
+        _engineKind = new ComboBox
+        {
+            Location = new Point(272, 154),
+            Width = 170,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+        };
+        _engineKind.Items.AddRange(new object[] { "Windows OCR (默认)", "PaddleOCR (GPU)" });
+        _engineKind.SelectedIndex = _config.OcrEngine == OcrEngineKind.Paddle ? 1 : 0;
+        _engineKind.SelectedIndexChanged += (_, _) => OnEngineKindChanged();
+
         _ocrBox = new TextBox
         {
             Location = new Point(16, 205),
@@ -125,7 +137,7 @@ public sealed class MainForm : Form
             lblCode, _codeLabel, _latencyLabel, _statusLabel,
             _toggleButton, selectButton, lblCooldown, _cooldown, lblInterval, _interval, soundCheck,
             lblConfirm, _confirm, lblScale, _scale,
-            lblOcr, _ocrBox, grabOnStartCheck,
+            lblOcr, _ocrBox, grabOnStartCheck, lblEngine, _engineKind,
         });
 
         // 托盘图标
@@ -186,6 +198,25 @@ public sealed class MainForm : Form
         return r == null ? "未框选" : $"{r.Value.Width}x{r.Value.Height}";
     }
 
+    private void OnEngineKindChanged()
+    {
+        var kind = _engineKind.SelectedIndex == 1 ? OcrEngineKind.Paddle : OcrEngineKind.Windows;
+        if (kind == _config.OcrEngine) return;
+
+        _config.OcrEngine = kind;
+        _config.Save();
+
+        // 引擎在 CaptureEngine 构造时固定：停-重建-启，切换即时生效
+        _engine.ReinitializeOcr();
+        _toggleButton.Text = _engine.Running ? "停止抓取 (Ctrl+Alt+G)" : "开始抓取 (Ctrl+Alt+G)";
+        _statusLabel.Text = StatusText();
+
+        if (_engine.InitError != null)
+            MessageBox.Show(_engine.InitError, "OCR 不可用", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        else if (_engine.InitWarning != null)
+            MessageBox.Show(_engine.InitWarning, "OCR 初始化提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
+
     private void ToggleGrabbing()
     {
         if (_engine.Running)
@@ -236,7 +267,7 @@ public sealed class MainForm : Form
         {
             _codeLabel.Text = code;
             _latencyLabel.Text = $"{latencyMs:F0} ms";
-            _latencyLabel.ForeColor = latencyMs <= 100 ? Color.Green : Color.Red;
+            _latencyLabel.ForeColor = latencyMs <= 200 ? Color.Green : Color.Red;
             if (_config.SoundEnabled) SystemSounds.Exclamation.Play();
             _tray.ShowBalloonTip(1500, "已抓取房间码", $"{code}（{latencyMs:F0}ms）", ToolTipIcon.Info);
             _statusLabel.Text = StatusText();

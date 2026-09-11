@@ -6,6 +6,16 @@
     <Compile Remove="OcrTest\**" />
   </ItemGroup>
 
+  <!-- OCR 引擎（PaddleOCR，GPU 路径，可选）。默认引擎是系统自带 Windows OCR，
+       这些包只在用户切到 PaddleOCR 时才被使用。sm_120 runtime 面向 RTX 50 系（Blackwell）。 -->
+  <ItemGroup>
+    <PackageReference Include="Sdcb.PaddleOCR" Version="3.3.1" />
+    <PackageReference Include="Sdcb.PaddleInference.runtime.win64.cu129_cudnn910_sm120" Version="3.3.1.70" />
+    <PackageReference Include="Sdcb.PaddleOCR.Models.Local" Version="3.3.1" />
+    <PackageReference Include="Sdcb.PaddleOCR.Models.LocalV5" Version="3.3.1" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>

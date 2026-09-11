@@ -1,10 +1,6 @@
 using System.Diagnostics;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.WindowsRuntime;
-using Windows.Globalization;
-using Windows.Graphics.Imaging;
-using Windows.Media.Ocr;
 
 namespace RoomCodeGrabber;
 
@@ -24,7 +20,7 @@ public sealed class CaptureEngine : IDisposable
     private Thread? _thread;
     private volatile bool _running;
 
-    private OcrEngine? _ocr;
+    private IOcrEngine? _ocr;
     public string? InitError { get; private set; }
     /// <summary>非致命提示：如未装 en-US 语言包而降级到其他引擎（对字母数字码识别率明显下降）。</summary>
     public string? InitWarning { get; private set; }
@@ -45,36 +41,38 @@ public sealed class CaptureEngine : IDisposable
 
     private void InitOcr()
     {
+        if (_config.OcrEngine == OcrEngineKind.Paddle)
+        {
+            try
+            {
+                _ocr = new PaddleOcrEngine();
+                return;
+            }
+            catch (Exception ex)
+            {
+                // Paddle 不可用（无 NVIDIA / CUDA runtime 缺失 / 模型加载失败）→ 回退 Windows OCR
+                var reason = ex.Message.Split('\n')[0];
+                try
+                {
+                    var win = new WindowsOcrEngine(_config.ScaleFactor);
+                    _ocr = win;
+                    InitWarning = $"PaddleOCR 初始化失败，已回退到 Windows OCR。\n原因: {reason}"
+                                  + (win.Warning != null ? "\n\n" + win.Warning : "");
+                    return;
+                }
+                catch (Exception ex2)
+                {
+                    InitError = "OCR 引擎初始化失败: " + ex2.Message;
+                    return;
+                }
+            }
+        }
+
         try
         {
-            // 纯字母数字的房间码用 en-US 识别最准；不可用则退回用户语言，再不行取第一个可用识别器
-            var en = new Language("en-US");
-            _ocr = OcrEngine.TryCreateFromLanguage(en);
-            if (_ocr == null)
-            {
-                // en-US 缺失：退回用户语言/任意语言。中文引擎对纯字母数字码极弱——
-                // 会吞字、乱插空格（实测真实码 OZB459 被识别成 "OZB 59"），且即使
-                // 干净白底黑字也要 ~40px 才能读对。必须显式提示，否则用户只会看到
-                // "识别率莫名很低"却无从排查。
-                _ocr = OcrEngine.TryCreateFromUserProfileLanguages();
-                if (_ocr == null)
-                {
-                    var any = OcrEngine.AvailableRecognizerLanguages.FirstOrDefault();
-                    if (any != null) _ocr = OcrEngine.TryCreateFromLanguage(any);
-                }
-                if (_ocr != null)
-                {
-                    InitWarning =
-                        $"未安装 en-US OCR 语言包，当前回退到 {_ocr.RecognizerLanguage.LanguageTag} 引擎，"
-                        + "对字母数字房间码识别率会明显偏低（常吞字/乱插空格）。\n\n"
-                        + "建议安装英文 OCR 语言包（在管理员 PowerShell 中执行，完成后重启本程序）：\n"
-                        + "Add-WindowsCapability -Online -Name \"Language.OCR~~~en-US~0.0.1.0\"";
-                }
-            }
-            if (_ocr == null)
-            {
-                InitError = "未找到可用的 Windows OCR 语言包。请在 系统设置 > 时间和语言 > 语言 中安装任意语言。";
-            }
+            var win = new WindowsOcrEngine(_config.ScaleFactor);
+            _ocr = win;
+            InitWarning = win.Warning;
         }
         catch (Exception ex)
         {
@@ -83,7 +81,7 @@ public sealed class CaptureEngine : IDisposable
     }
 
     public bool Running => _running;
-    public string OcrLanguage => _ocr?.RecognizerLanguage.LanguageTag ?? "-";
+    public string OcrLanguage => _ocr?.Name ?? "-";
 
     public void Start()
     {
@@ -112,6 +110,19 @@ public sealed class CaptureEngine : IDisposable
     {
         _detector.Reset();
         _prevCodes.Clear();
+    }
+
+    /// <summary>按当前配置重建 OCR 引擎（切换引擎后即时生效，无需重启）。停-重建-启，保证线程安全。</summary>
+    public void ReinitializeOcr()
+    {
+        bool wasRunning = _running;
+        Stop();
+        _ocr?.Dispose();
+        _ocr = null;
+        InitError = null;
+        InitWarning = null;
+        InitOcr();
+        if (wasRunning && InitError == null) Start();
     }
 
     private void Loop()
@@ -154,8 +165,8 @@ public sealed class CaptureEngine : IDisposable
                 CopyPixelOperation.SourceCopy);
         }
 
-        // ---- 2. 预处理（Otsu 二值化/对比度拉伸 + 自动反色 + 块放大），见 Preprocessor ----
-        var gray = _preprocessor.Process(_captureBmp!, out int gw2, out int gh2);
+        // ---- 2. 预处理（仅供变化检测用；OCR 引擎会各自做自己的预处理）----
+        var gray = _preprocessor.Process(_captureBmp!, out _, out _);
         if (_prevGray == null || _prevGray.Length != gray.Length)
             _prevGray = new byte[gray.Length];
 
@@ -167,18 +178,15 @@ public sealed class CaptureEngine : IDisposable
         }
         Array.Copy(gray, _prevGray!, gray.Length);
 
-        // ---- 4. OCR ----
-        var software = SoftwareBitmap.CreateCopyFromBuffer(
-            gray.AsBuffer(), BitmapPixelFormat.Gray8, gw2, gh2);
+        // ---- 4. OCR（传原始裁剪图，由引擎自行预处理）----
         string text;
         try
         {
-            var result = _ocr!.RecognizeAsync(software).AsTask().GetAwaiter().GetResult();
-            text = result.Text;
+            text = _ocr!.Recognize(_captureBmp!);
         }
-        finally
+        catch
         {
-            software.Dispose();
+            text = ""; // 单帧识别失败不中断抓帧循环
         }
 
         OcrDebug?.Invoke(text);
