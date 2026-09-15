@@ -32,6 +32,13 @@ public sealed class AppConfig
     // 复制成功后多少秒自动清空剪贴板（0 = 禁用）。仅在内容仍是程序写入的房间码时才清。
     public int ClipboardClearSeconds { get; set; } = 180;
 
+    // 抓到码写入剪贴板后，向当前焦点窗口自动粘贴一次 Ctrl+V。默认关闭；
+    // 目标窗口由用户自行聚焦，程序不做窗口选择。游戏窗口能否收到需真机验证
+    public bool AutoPasteEnabled { get; set; } = false;
+
+    // 自动粘贴前等待的毫秒数（0 = 写入后立即粘贴），给用户切窗口/聚焦输入框的时间
+    public int AutoPasteDelayMs { get; set; } = 0;
+
     // OCR 引擎选择。Windows = 系统自带（零依赖，任何机器可用，默认）；
     // Paddle = PaddleOCR GPU（需 NVIDIA 独显 + sm_120 CUDA runtime，识别率更高，用于对比切换）
     public OcrEngineKind OcrEngine { get; set; } = OcrEngineKind.Windows;

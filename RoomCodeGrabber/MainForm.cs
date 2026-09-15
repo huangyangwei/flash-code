@@ -25,6 +25,8 @@ public sealed class MainForm : Form
     private readonly NumericUpDown _confirm;
     private readonly NumericUpDown _scale;
     private readonly ComboBox _engineKind;
+    private readonly Button _clearClipboardButton;
+    private readonly System.Windows.Forms.Timer _clearFeedbackTimer;
 
     public MainForm(AppConfig config, CaptureEngine engine)
     {
@@ -35,7 +37,7 @@ public sealed class MainForm : Form
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(780, 360);
+        ClientSize = new Size(780, 384);
         Font = new Font("Microsoft YaHei UI", 9f);
 
         var lblCode = new Label { Text = "最新抓取:", Location = new Point(16, 14), AutoSize = true };
@@ -88,7 +90,7 @@ public sealed class MainForm : Form
             if (_engine.Running) { _engine.Stop(); _engine.Start(); }
         };
 
-        var lblOcr = new Label { Text = "OCR 原文（调试）:", Location = new Point(16, 185), AutoSize = true };
+        var lblOcr = new Label { Text = "OCR 原文（调试）:", Location = new Point(16, 209), AutoSize = true };
         var lblScale = new Label { Text = "放大倍数:", Location = new Point(614, 132), AutoSize = true };
         _scale = new NumericUpDown { Location = new Point(682, 128), Width = 50, Minimum = 2, Maximum = 6, Value = _config.ScaleFactor };
         _scale.ValueChanged += (_, _) =>
@@ -134,9 +136,44 @@ public sealed class MainForm : Form
             _config.Save();
         };
 
+        // 手动清空：与自动清空共存（秒数 0 = 纯手动），立即清、给 1 秒"已清空"反馈
+        _clearClipboardButton = new Button { Text = "清空剪贴板", Location = new Point(636, 152), Size = new Size(112, 26) };
+        _clearClipboardButton.Click += (_, _) => ClearClipboardNow();
+        _clearFeedbackTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+        _clearFeedbackTimer.Tick += (_, _) =>
+        {
+            _clearFeedbackTimer.Stop();
+            _clearClipboardButton.Text = "清空剪贴板";
+        };
+
+        // 自动粘贴：抓到码写入剪贴板后向焦点窗口合成一次 Ctrl+V（目标窗口由用户自行聚焦）
+        var autoPasteCheck = new CheckBox
+        {
+            Text = "自动粘贴", Location = new Point(16, 182), AutoSize = true,
+            Checked = _config.AutoPasteEnabled,
+        };
+        var lblPasteDelay = new Label { Text = "粘贴延迟(ms):", Location = new Point(100, 186), AutoSize = true };
+        var pasteDelay = new NumericUpDown
+        {
+            Location = new Point(196, 182), Width = 70,
+            Minimum = 0, Maximum = AutoPastePolicy.MaxDelayMs, Value = _config.AutoPasteDelayMs,
+            Enabled = _config.AutoPasteEnabled,
+        };
+        autoPasteCheck.CheckedChanged += (_, _) =>
+        {
+            _config.AutoPasteEnabled = autoPasteCheck.Checked;
+            pasteDelay.Enabled = autoPasteCheck.Checked;
+            _config.Save();
+        };
+        pasteDelay.ValueChanged += (_, _) =>
+        {
+            _config.AutoPasteDelayMs = (int)pasteDelay.Value;
+            _config.Save();
+        };
+
         _ocrBox = new TextBox
         {
-            Location = new Point(16, 205),
+            Location = new Point(16, 229),
             Size = new Size(748, 120),
             Multiline = true,
             ReadOnly = true,
@@ -150,6 +187,7 @@ public sealed class MainForm : Form
             _toggleButton, selectButton, lblCooldown, _cooldown, lblInterval, _interval, soundCheck,
             lblConfirm, _confirm, lblScale, _scale,
             lblOcr, _ocrBox, grabOnStartCheck, lblEngine, _engineKind, lblClipClear, clipClear,
+            _clearClipboardButton, autoPasteCheck, lblPasteDelay, pasteDelay,
         });
 
         // 托盘图标
@@ -162,6 +200,7 @@ public sealed class MainForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add("框选区域 (Ctrl+Alt+S)", null, (_, _) => SelectRegion());
         menu.Items.Add("开始/停止 (Ctrl+Alt+G)", null, (_, _) => ToggleGrabbing());
+        menu.Items.Add("清空剪贴板", null, (_, _) => ClearClipboardNow());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => Close());
         _tray.ContextMenuStrip = menu;
@@ -271,6 +310,15 @@ public sealed class MainForm : Form
 
         _toggleButton.Text = _engine.Running ? "停止抓取 (Ctrl+Alt+G)" : "开始抓取 (Ctrl+Alt+G)";
         _statusLabel.Text = StatusText();
+    }
+
+    /// <summary>立即清空剪贴板（手动入口）。按钮文本短暂置"已清空"作反馈。</summary>
+    private void ClearClipboardNow()
+    {
+        ClipboardService.Clear();
+        _clearClipboardButton.Text = "已清空";
+        _clearFeedbackTimer.Stop();
+        _clearFeedbackTimer.Start();
     }
 
     private void OnCodeGrabbed(string code, double latencyMs)

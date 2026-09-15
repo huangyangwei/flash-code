@@ -8,5 +8,13 @@
   <ItemGroup>
     <Compile Include="..\CodeDetector.cs" Link="CodeDetector.cs" />
     <Compile Include="..\ClipboardClearPolicy.cs" Link="ClipboardClearPolicy.cs" />
+    <Compile Include="..\AutoPastePolicy.cs" Link="AutoPastePolicy.cs" />
+    <Compile Include="..\AutoPasteScheduler.cs" Link="AutoPasteScheduler.cs" />
+    <Compile Include="..\KeyboardInjector.cs" Link="KeyboardInjector.cs" />
+    <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- AppConfig 依赖 System.Drawing.Rectangle（Region 属性），net8.0 需显式引用 -->
+    <PackageReference Include="System.Drawing.Primitives" Version="4.3.0" />
   </ItemGroup>
 </Project>

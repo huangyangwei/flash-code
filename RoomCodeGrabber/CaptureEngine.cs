@@ -17,6 +17,7 @@ public sealed class CaptureEngine : IDisposable
 
     private readonly AppConfig _config;
     private readonly CodeDetector _detector;
+    private readonly AutoPasteScheduler _paste;
     private Thread? _thread;
     private volatile bool _running;
 
@@ -36,7 +37,16 @@ public sealed class CaptureEngine : IDisposable
         _config = config;
         _preprocessor = new Preprocessor(config.ScaleFactor);
         _detector = new CodeDetector(config.CooldownSeconds, config.ConfirmFrames, config.GrabOnStart);
+        _paste = new AutoPasteScheduler(SendPasteWithLog, static action => Task.Run(action));
         InitOcr();
+    }
+
+    /// <summary>注入失败不抛异常，经 OcrDebug 留痕（抓帧线程与后台线程都会走到这里）。</summary>
+    private bool SendPasteWithLog()
+    {
+        if (KeyboardInjector.SendCtrlV()) return true;
+        OcrDebug?.Invoke("[自动粘贴] Ctrl+V 注入失败（Ctrl 正被按住或被系统拒绝）");
+        return false;
     }
 
     private void InitOcr()
@@ -233,13 +243,15 @@ public sealed class CaptureEngine : IDisposable
         FireIfTriggered(codes, sw);
     }
 
-    /// <summary>码判定 → 写剪贴板 → 通知 UI。变化帧与静止帧共走这一条，免得两条路径行为分叉。</summary>
+    /// <summary>码判定 → 写剪贴板 → 通知 UI（→ 可选自动粘贴）。变化帧与静止帧共走这一条，免得两条路径行为分叉。</summary>
     private void FireIfTriggered(List<string> codes, Stopwatch sw)
     {
         var trigger = _detector.Analyze(codes);
         if (trigger == null) return;
-        ClipboardService.SetTextWithAutoClear(trigger, _config.ClipboardClearSeconds);
+        bool written = ClipboardService.SetTextWithAutoClear(trigger, _config.ClipboardClearSeconds);
         CodeGrabbed?.Invoke(trigger, sw.Elapsed.TotalMilliseconds);
+        // 延迟等待在 Task.Run 后台线程，抓帧循环不被阻塞
+        _paste.AfterWrite(written, _config.AutoPasteEnabled, _config.AutoPasteDelayMs);
     }
 
     private bool IsSameFrame(byte[] gray)

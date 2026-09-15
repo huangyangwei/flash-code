@@ -77,4 +77,55 @@ var e3 = det3.Analyze(new List<string> { "OZB459" });   // 已触发：不再重
 bool fireOk = e1 == null && e2 == "OZB459" && e3 == null;
 Console.WriteLine(fireOk ? "PASS  触发即标记（丢弃返回值会吃掉码）" : $"FAIL  触发标记: {e1},{e2},{e3}");
 
-Environment.Exit(fail == 0 && dupOk && grabOk && scPass == scCases.Length && fireOk ? 0 : 1);
+// 自动粘贴触发判定（纯逻辑）
+var apCases = new (string name, bool written, bool enabled, int configured, bool wantInject, int wantDelay)[]
+{
+    ("写入成功 + 开启 -> 注入",       true,  true,  0,     true,  0),
+    ("写入失败 -> 不注入",            false, true,  0,     false, 0),
+    ("开关关闭 -> 不注入",            true,  false, 0,     false, 0),
+    ("负延迟 -> 夹取到 0",            true,  true,  -50,   true,  0),
+    ("超上限延迟 -> 夹取到 10000",    true,  true,  99999, true,  AutoPastePolicy.MaxDelayMs),
+};
+int apPass = 0;
+foreach (var (name, written, enabled, configured, wantInject, wantDelay) in apCases)
+{
+    var inject = AutoPastePolicy.ShouldInject(written, enabled, configured, out var delay);
+    if (inject == wantInject && delay == wantDelay) { apPass++; Console.WriteLine($"PASS  {name}"); }
+    else Console.WriteLine($"FAIL  {name}: inject={inject}, delay={delay}, 期望 inject={wantInject}, delay={wantDelay}");
+}
+Console.WriteLine($"{apPass}/{apCases.Length} ShouldInject 断言通过");
+
+// 自动粘贴调度（mock 注入器记录调用次数，不真正发键）
+int pasteCalls = 0;
+var scheduler = new AutoPasteScheduler(() => { pasteCalls++; return true; }, action => action());   // 同步执行器
+scheduler.AfterWrite(false, true, 0);    // 写入失败 -> 不调
+scheduler.AfterWrite(true, false, 0);    // 开关关 -> 不调
+scheduler.AfterWrite(true, true, 0);     // 触发一次
+bool schedOk = pasteCalls == 1;
+Console.WriteLine(schedOk ? "PASS  调度：失败/关闭不注入，成功注入恰好一次" : $"FAIL  调度: pasteCalls={pasteCalls}");
+
+// 异步执行器路径：只捕获动作，不执行（延迟等待不发生在判定线程）
+Action? pending = null;
+var scheduler2 = new AutoPasteScheduler(() => true, action => pending = action);
+scheduler2.AfterWrite(true, true, 5000);
+bool asyncOk = pending != null;
+Console.WriteLine(asyncOk ? "PASS  调度：非零延迟交给执行器异步等待" : "FAIL  调度: 未调度延迟动作");
+pending?.Invoke();   // 补执行：确认动作本身可跑（Thread.Sleep(5000) 后注入）——注入器为 mock，不真正发键
+
+// Ctrl+V 序列组装：Ctrl↓ V↓ V↑ Ctrl↑，全部带 scancode 标志
+var seq = KeyboardInjector.BuildCtrlVSequence();
+bool seqOk = seq.Length == 4
+    && seq[0] == new KeyboardInjector.KeyStroke(KeyboardInjector.ScanCtrl, KeyboardInjector.FlagKeyDown)
+    && seq[1] == new KeyboardInjector.KeyStroke(KeyboardInjector.ScanV, KeyboardInjector.FlagKeyDown)
+    && seq[2] == new KeyboardInjector.KeyStroke(KeyboardInjector.ScanV, KeyboardInjector.FlagKeyUp)
+    && seq[3] == new KeyboardInjector.KeyStroke(KeyboardInjector.ScanCtrl, KeyboardInjector.FlagKeyUp)
+    && (KeyboardInjector.FlagKeyDown & 0x0008) != 0;   // 必须 KEYEVENTF_SCANCODE
+Console.WriteLine(seqOk ? "PASS  Ctrl+V 序列组装（scancode 模式）" : "FAIL  Ctrl+V 序列组装");
+
+// 配置默认值：自动粘贴默认关闭、零延迟
+var defCfg = new AppConfig();
+bool cfgOk = !defCfg.AutoPasteEnabled && defCfg.AutoPasteDelayMs == 0;
+Console.WriteLine(cfgOk ? "PASS  配置默认值：自动粘贴关闭、延迟 0" : $"FAIL  配置默认值: {defCfg.AutoPasteEnabled}, {defCfg.AutoPasteDelayMs}");
+
+Environment.Exit(fail == 0 && dupOk && grabOk && scPass == scCases.Length && fireOk
+    && apPass == apCases.Length && schedOk && asyncOk && seqOk && cfgOk ? 0 : 1);
