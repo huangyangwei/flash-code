@@ -11,3 +11,9 @@ obj/
 # OS files
 Thumbs.db
 .DS_Store
+
+# Embedded frontend build output
+ClientWeb/node_modules/
+ClientWeb/dist/
+ClientWeb/qa-output/
+artifacts/

@@ -4,11 +4,36 @@
     <!-- 测试子项目不参与主程序编译 -->
     <Compile Remove="LogicTests\**" />
     <Compile Remove="OcrTest\**" />
+    <Compile Remove="obj\**" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Vite produces these files before the desktop build. They are copied as
+         static WebView2 assets; the packaged application never starts Node. -->
+    <Content Include="..\ClientWeb\dist\**\*">
+      <Link>app\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <Target Name="EnsureClientWebAssets" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('..\ClientWeb\dist\index.html')"
+           Text="ClientWeb assets are missing. Run 'npm ci' and 'npm run build' in ClientWeb first." />
+  </Target>
+
+  <!-- WebView2 ships both desktop controls. This app uses WinForms only. -->
+  <Target Name="RemoveUnusedWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
 
   <!-- OCR 引擎（PaddleOCR，GPU 路径，可选）。默认引擎是系统自带 Windows OCR，
        这些包只在用户切到 PaddleOCR 时才被使用。sm_120 runtime 面向 RTX 50 系（Blackwell）。 -->
   <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" GeneratePathProperty="true" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
     <PackageReference Include="Sdcb.PaddleOCR" Version="3.3.1" />
     <PackageReference Include="Sdcb.PaddleInference.runtime.win64.cu129_cudnn910_sm120" Version="3.3.1.70" />
     <PackageReference Include="Sdcb.PaddleOCR.Models.Local" Version="3.3.1" />

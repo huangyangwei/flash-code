@@ -1,12 +1,14 @@
-# RoomCodeGrabber — 抖音无畏契约房间码自动抓取
+# RoomCodeGrabber — 原生抓码实现说明
+
+统一桌面客户端的安装、启动、配置迁移和发布命令请以仓库根目录的 `README.md` 为准。本文件保留原生 OCR 的实现细节和历史性能记录。
 
 自动识别抖音无畏契约直播画面上出现的房间码（格式：3 位大写字母 + 3 位数字，如 `ASD123`），
-并立即复制到剪贴板。**从码渲染到屏幕到写入剪贴板，实测延迟一般 ≤70ms（上限 100ms）。**
+并立即复制到剪贴板。下述历史测量来自独立抓码流程；WebView2 合成画面的端到端延迟需另行实测，不能直接套用旧值。
 
 ## 使用
 
-1. 运行 `RoomCodeGrabber.exe`（或 `dotnet run`）
-2. 首次启动会弹出全屏遮罩，**拖拽框选浏览器里的直播视频画面**（框住码出现的位置即可，不必是整个视频）
+1. 运行发布目录中的 `RoomCodeGrabber.exe`（开发环境见根目录说明）
+2. 在工作台点击“框选画面区域”，拖拽框选可见直播视频里的码（不必是整个视频）
 3. 框选完成后自动开始抓取；直播画面出现新码 → 自动复制，窗口/托盘气泡显示码和实测延迟
 4. 看下一个直播间时按 `Ctrl+Alt+S` 重新框选
 
@@ -34,11 +36,11 @@
 ## 构建
 
 ```powershell
-dotnet publish -c Release -r win-x64 -p:PublishSingleFile=true --self-contained false
-# 产物: bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\RoomCodeGrabber.exe
+./scripts/publish-win-x64.ps1
+# 产物: artifacts/flash-client-win-x64-.../RoomCodeGrabber.exe 和 app/ 页面资源
 ```
 
-配置保存在 exe 同目录 `config.json`（抓取区域、冷却、抓帧间隔、提示音、剪贴板清空、自动粘贴）。
+配置保存在 exe 同目录 `config.json`（抓取区域、冷却、抓帧间隔、提示音、剪贴板清空、自动粘贴和点击坐标）。
 
 ## 剪贴板管理
 
@@ -46,6 +48,8 @@ dotnet publish -c Release -r win-x64 -p:PublishSingleFile=true --self-contained 
 - **手动清空**：主窗体"清空剪贴板"按钮，或托盘图标右键菜单"清空剪贴板"，随时立即清空
 
 ## 自动粘贴
+
+统一客户端还可在设置中点“记录光标位置”，3 秒后记录目标窗口内鼠标所在的屏幕坐标；“自动点击”默认关闭。启用后复制成功才按配置延迟先点击目标位置，若同时勾选“自动粘贴”再发送 Ctrl+V。多屏幕布局变化后应重新记录，点击失败会跳过该次粘贴。
 
 勾选主窗体"自动粘贴"后，抓到码写入剪贴板会自动向**当前焦点窗口**粘贴一次（`Ctrl+V`，scancode 级注入，兼容游戏窗口）。使用方式：
 

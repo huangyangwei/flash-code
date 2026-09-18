@@ -9,7 +9,7 @@ namespace RoomCodeGrabber;
 /// 被压缩噪声填死，先放大则能在足够分辨率下保留字形细节。
 /// 目标形态：黑字白底。终端反色、半透明贴片、深底浅字都靠这一步抹平。
 /// </summary>
-public sealed class Preprocessor
+public sealed class Preprocessor : IDisposable
 {
     private readonly int _scale; // 放大倍数：小字号建议 3~4，默认 3
     private Bitmap? _scaledBmp;
@@ -142,5 +142,11 @@ public sealed class Preprocessor
         {
             _scaledBmp = new Bitmap(gw, gh, PixelFormat.Format32bppArgb);
         }
+    }
+
+    public void Dispose()
+    {
+        _scaledBmp?.Dispose();
+        _scaledBmp = null;
     }
 }

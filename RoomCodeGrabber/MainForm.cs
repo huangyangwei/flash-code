@@ -5,11 +5,13 @@ using System.Runtime.Versioning;
 namespace RoomCodeGrabber;
 
 [SupportedOSPlatform("windows10.0.17763.0")]
-public sealed class MainForm : Form
+public sealed partial class MainForm : Form
 {
     private const int WM_HOTKEY = 0x0312;
     private const int HOTKEY_ID_SELECT = 1; // Ctrl+Alt+S
     private const int HOTKEY_ID_TOGGLE = 2; // Ctrl+Alt+G
+    private bool _closing;
+    private bool _shutdownComplete;
 
     private readonly AppConfig _config;
     private readonly CaptureEngine _engine;
@@ -26,6 +28,8 @@ public sealed class MainForm : Form
     private readonly NumericUpDown _scale;
     private readonly ComboBox _engineKind;
     private readonly Button _clearClipboardButton;
+    private readonly Button _recordCursorButton;
+    private readonly Label _cursorPositionLabel;
     private readonly System.Windows.Forms.Timer _clearFeedbackTimer;
 
     public MainForm(AppConfig config, CaptureEngine engine)
@@ -34,10 +38,11 @@ public sealed class MainForm : Form
         _engine = engine;
 
         Text = "RoomCodeGrabber - 抖音无畏契约房间码抓取";
-        FormBorderStyle = FormBorderStyle.FixedSingle;
-        MaximizeBox = false;
+        FormBorderStyle = FormBorderStyle.Sizable;
+        MaximizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(780, 384);
+        ClientSize = new Size(1280, 800);
+        MinimumSize = new Size(760, 560);
         Font = new Font("Microsoft YaHei UI", 9f);
 
         var lblCode = new Label { Text = "最新抓取:", Location = new Point(16, 14), AutoSize = true };
@@ -61,16 +66,13 @@ public sealed class MainForm : Form
 
         var lblCooldown = new Label { Text = "同码冷却(秒):", Location = new Point(16, 132), AutoSize = true };
         _cooldown = new NumericUpDown { Location = new Point(120, 128), Width = 60, Minimum = 0, Maximum = 600, Value = _config.CooldownSeconds };
-        _cooldown.ValueChanged += (_, _) => { _config.CooldownSeconds = (int)_cooldown.Value; _config.Save(); };
+        _cooldown.ValueChanged += (_, _) => { if (_engine.Reconfigure(() => _config.CooldownSeconds = (int)_cooldown.Value)) _config.Save(); };
 
         var lblInterval = new Label { Text = "抓帧间隔(ms):", Location = new Point(210, 132), AutoSize = true };
         _interval = new NumericUpDown { Location = new Point(310, 128), Width = 60, Minimum = 10, Maximum = 200, Value = _config.CaptureIntervalMs };
         _interval.ValueChanged += (_, _) =>
         {
-            _config.CaptureIntervalMs = (int)_interval.Value;
-            _config.Save();
-            // 间隔即时生效：重启循环
-            if (_engine.Running) { _engine.Stop(); _engine.Start(); }
+            if (_engine.Reconfigure(() => _config.CaptureIntervalMs = (int)_interval.Value)) _config.Save();
         };
 
         var soundCheck = new CheckBox
@@ -84,10 +86,7 @@ public sealed class MainForm : Form
         _confirm = new NumericUpDown { Location = new Point(548, 128), Width = 50, Minimum = 1, Maximum = 4, Value = _config.ConfirmFrames };
         _confirm.ValueChanged += (_, _) =>
         {
-            _config.ConfirmFrames = (int)_confirm.Value;
-            _config.Save();
-            // 确认帧数在检测器构造时固定：改后重启循环生效
-            if (_engine.Running) { _engine.Stop(); _engine.Start(); }
+            if (_engine.Reconfigure(() => _config.ConfirmFrames = (int)_confirm.Value)) _config.Save();
         };
 
         var lblOcr = new Label { Text = "OCR 原文（调试）:", Location = new Point(16, 209), AutoSize = true };
@@ -95,10 +94,7 @@ public sealed class MainForm : Form
         _scale = new NumericUpDown { Location = new Point(682, 128), Width = 50, Minimum = 2, Maximum = 6, Value = _config.ScaleFactor };
         _scale.ValueChanged += (_, _) =>
         {
-            _config.ScaleFactor = (int)_scale.Value;
-            _config.Save();
-            // 放大倍数在引擎构造时固定：改后重启循环生效
-            if (_engine.Running) { _engine.Stop(); _engine.Start(); }
+            if (_engine.Reconfigure(() => _config.ScaleFactor = (int)_scale.Value)) _config.Save();
         };
 
         var grabOnStartCheck = new CheckBox
@@ -108,9 +104,7 @@ public sealed class MainForm : Form
         };
         grabOnStartCheck.CheckedChanged += (_, _) =>
         {
-            _config.GrabOnStart = grabOnStartCheck.Checked;
-            _config.Save();
-            if (_engine.Running) { _engine.Stop(); _engine.Start(); }
+            if (_engine.Reconfigure(() => _config.GrabOnStart = grabOnStartCheck.Checked)) _config.Save();
         };
 
         var lblEngine = new Label { Text = "OCR 引擎:", Location = new Point(200, 158), AutoSize = true };
@@ -171,6 +165,29 @@ public sealed class MainForm : Form
             _config.Save();
         };
 
+        var autoClickCheck = new CheckBox
+        {
+            Text = "自动点击", Location = new Point(285, 182), AutoSize = true,
+            Checked = _config.AutoClickEnabled,
+            Enabled = _config.AutoClickPosition is not null,
+        };
+        autoClickCheck.CheckedChanged += (_, _) =>
+        {
+            _config.AutoClickEnabled = autoClickCheck.Checked;
+            _config.Save();
+        };
+        _recordCursorButton = new Button { Text = "记录光标位置", Location = new Point(390, 181), Size = new Size(130, 26) };
+        _recordCursorButton.Click += async (_, _) =>
+        {
+            await RecordCursorPositionAsync();
+            autoClickCheck.Enabled = _config.AutoClickPosition is not null;
+        };
+        _cursorPositionLabel = new Label
+        {
+            Text = _config.AutoClickPosition is { } saved ? $"目标: {saved.X}, {saved.Y}" : "目标: 未记录",
+            Location = new Point(528, 186), AutoSize = true,
+        };
+
         _ocrBox = new TextBox
         {
             Location = new Point(16, 229),
@@ -188,6 +205,7 @@ public sealed class MainForm : Form
             lblConfirm, _confirm, lblScale, _scale,
             lblOcr, _ocrBox, grabOnStartCheck, lblEngine, _engineKind, lblClipClear, clipClear,
             _clearClipboardButton, autoPasteCheck, lblPasteDelay, pasteDelay,
+            autoClickCheck, _recordCursorButton, _cursorPositionLabel,
         });
 
         // 托盘图标
@@ -208,18 +226,37 @@ public sealed class MainForm : Form
 
         // 引擎事件（抓帧线程触发 -> UI 线程）
         _engine.CodeGrabbed += OnCodeGrabbed;
+        _engine.ClipboardWriteFailed += OnClipboardWriteFailed;
         _engine.OcrDebug += OnOcrDebug;
 
         // 全局热键
         RegisterHotKey(Handle, HOTKEY_ID_SELECT, MOD_CONTROL | MOD_ALT, (int)Keys.S);
         RegisterHotKey(Handle, HOTKEY_ID_TOGGLE, MOD_CONTROL | MOD_ALT, (int)Keys.G);
 
-        FormClosing += (_, e) =>
+        FormClosing += async (_, e) =>
         {
-            if (_engine.Running) _engine.Stop();
+            if (_shutdownComplete) return;
+            e.Cancel = true;
+            if (_closing) return;
+            _closing = true;
+            _tray.Visible = false;
             UnregisterHotKey(Handle, HOTKEY_ID_SELECT);
             UnregisterHotKey(Handle, HOTKEY_ID_TOGGLE);
-            _tray.Visible = false;
+            _engine.CancelPendingPaste();
+            _engine.Stop();
+            try { await ShutdownEmbeddedClientAsync(); }
+            finally
+            {
+                _engine.CodeGrabbed -= OnCodeGrabbed;
+                _engine.ClipboardWriteFailed -= OnClipboardWriteFailed;
+                _engine.OcrDebug -= OnOcrDebug;
+                _clearFeedbackTimer.Stop();
+                _clearFeedbackTimer.Dispose();
+                _tray.ContextMenuStrip?.Dispose();
+                _tray.Dispose();
+                _shutdownComplete = true;
+                Close();
+            }
         };
 
         if (_engine.InitError != null)
@@ -231,11 +268,7 @@ public sealed class MainForm : Form
             MessageBox.Show(_engine.InitWarning, "OCR 识别率提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
-        if (_config.Region == null)
-        {
-            // 首次运行直接进入框选
-            BeginInvoke(SelectRegion);
-        }
+        InitializeEmbeddedClient();
     }
 
     private string StatusText() =>
@@ -254,11 +287,7 @@ public sealed class MainForm : Form
         var kind = _engineKind.SelectedIndex == 1 ? OcrEngineKind.Paddle : OcrEngineKind.Windows;
         if (kind == _config.OcrEngine) return;
 
-        _config.OcrEngine = kind;
-        _config.Save();
-
-        // 引擎在 CaptureEngine 构造时固定：停-重建-启，切换即时生效
-        _engine.ReinitializeOcr();
+        if (_engine.Reconfigure(() => _config.OcrEngine = kind)) _config.Save();
         _toggleButton.Text = _engine.Running ? "停止抓取 (Ctrl+Alt+G)" : "开始抓取 (Ctrl+Alt+G)";
         _statusLabel.Text = StatusText();
 
@@ -279,6 +308,7 @@ public sealed class MainForm : Form
             if (_engine.InitError != null)
             {
                 MessageBox.Show(_engine.InitError, "OCR 不可用", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                PublishCaptureStatus();
                 return;
             }
             if (_config.Region == null)
@@ -291,6 +321,7 @@ public sealed class MainForm : Form
         }
         _toggleButton.Text = _engine.Running ? "停止抓取 (Ctrl+Alt+G)" : "开始抓取 (Ctrl+Alt+G)";
         _statusLabel.Text = StatusText();
+        PublishCaptureStatus();
     }
 
     private void SelectRegion()
@@ -305,25 +336,32 @@ public sealed class MainForm : Form
             _config.Region = selector.SelectedRegion;
             _config.Save();
             _engine.ResetDetector();
-            if (!wasRunning) _engine.Start(); // 首次框选后自动开始
+            _engine.Start(); // 成功选择后立即恢复，已有运行状态不能丢失
         }
+        else if (wasRunning) _engine.Start(); // 取消时保留此前的抓取状态
 
         _toggleButton.Text = _engine.Running ? "停止抓取 (Ctrl+Alt+G)" : "开始抓取 (Ctrl+Alt+G)";
         _statusLabel.Text = StatusText();
+        PublishCaptureStatus();
     }
 
     /// <summary>立即清空剪贴板（手动入口）。按钮文本短暂置"已清空"作反馈。</summary>
     private void ClearClipboardNow()
     {
-        ClipboardService.Clear();
+        if (!ClipboardService.Clear())
+        {
+            PostError("剪贴板暂不可用，请检查占用后重试");
+            return;
+        }
         _clearClipboardButton.Text = "已清空";
         _clearFeedbackTimer.Stop();
         _clearFeedbackTimer.Start();
+        PostEvent(BridgeProtocol.SerializeEvent("clipboard.status", new { message = "剪贴板已清空" }));
     }
 
     private void OnCodeGrabbed(string code, double latencyMs)
     {
-        BeginInvoke(() =>
+        SafeBeginInvoke(() =>
         {
             _codeLabel.Text = code;
             _latencyLabel.Text = $"{latencyMs:F0} ms";
@@ -331,6 +369,17 @@ public sealed class MainForm : Form
             if (_config.SoundEnabled) SystemSounds.Exclamation.Play();
             _tray.ShowBalloonTip(1500, "已抓取房间码", $"{code}（{latencyMs:F0}ms）", ToolTipIcon.Info);
             _statusLabel.Text = StatusText();
+            PostEvent(CaptureBridgeEvents.Copied(code, latencyMs));
+        });
+    }
+
+    private void OnClipboardWriteFailed()
+    {
+        SafeBeginInvoke(() =>
+        {
+            _statusLabel.Text = "状态: 剪贴板写入失败，抓取仍在运行";
+            PostEvent(CaptureBridgeEvents.ClipboardFailure());
+            PublishCaptureStatus("剪贴板未写入；抓取继续运行");
         });
     }
 
@@ -341,19 +390,21 @@ public sealed class MainForm : Form
         // 视频画面常变时 OCR 接连触发，调试框最多 5 次/秒刷新，避免拖慢 UI
         if ((DateTime.UtcNow - _lastOcrDebug).TotalMilliseconds < 200) return;
         _lastOcrDebug = DateTime.UtcNow;
-        BeginInvoke(() =>
+        SafeBeginInvoke(() =>
         {
             _ocrBox.AppendText(text.Replace("\r\n", " / ").Replace("\n", " / ") + Environment.NewLine);
             // 只保留最近若干行
             if (_ocrBox.Lines.Length > 200)
                 _ocrBox.Text = string.Join(Environment.NewLine,
                     _ocrBox.Lines[^100..]);
+            _lastOcrText = text.Length > 256 ? text[..256] : text;
+            PublishCaptureStatus();
         });
     }
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WM_HOTKEY)
+        if (!_closing && m.Msg == WM_HOTKEY)
         {
             switch (m.WParam.ToInt32())
             {
@@ -362,6 +413,13 @@ public sealed class MainForm : Form
             }
         }
         base.WndProc(ref m);
+    }
+
+    private void SafeBeginInvoke(Action action)
+    {
+        if (_closing || IsDisposed || !IsHandleCreated) return;
+        try { BeginInvoke(() => { if (!_closing && !IsDisposed) action(); }); }
+        catch (InvalidOperationException) { }
     }
 
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, int vk);

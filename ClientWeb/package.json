@@ -1,0 +1,23 @@
+{
+  "name": "flash-client-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "test": "node --test \"test/*.test.js\"",
+    "browser:qa": "node test/browser-qa.mjs",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "lucide": "^0.468.0",
+    "mpegts.js": "^1.8.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0",
+    "vite": "^5.4.0"
+  }
+}

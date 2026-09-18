@@ -41,7 +41,15 @@ internal static class ClipboardService
     public static bool SetTextWithAutoClear(string text, int seconds)
     {
         if (!SetText(text)) return false;   // 写入失败：不调度，避免清掉非本次写入的内容
-        if (seconds <= 0) return true;
+        if (seconds <= 0)
+        {
+            lock (_gate)
+            {
+                _writtenText = null;
+                _clearTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+            }
+            return true;
+        }
 
         lock (_gate)
         {
@@ -68,7 +76,15 @@ internal static class ClipboardService
     {
         for (int attempt = 0; attempt < RetryCount; attempt++)
         {
-            if (TryClear()) return true;
+            if (TryClear())
+            {
+                lock (_gate)
+                {
+                    _writtenText = null;
+                    _clearTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                }
+                return true;
+            }
             Thread.Sleep(1);
         }
         return false;
@@ -92,8 +108,11 @@ internal static class ClipboardService
         if (written == null) return;
 
         var current = GetText();
-        if (ClipboardClearPolicy.ShouldClear(written, current, delayElapsed: true))
-            Clear();
+        lock (_gate)
+        {
+            if (_writtenText == written && ClipboardClearPolicy.ShouldClear(written, current, delayElapsed: true))
+                Clear();
+        }
     }
 
     // ---- Win32 原语 ----

@@ -97,20 +97,63 @@ Console.WriteLine($"{apPass}/{apCases.Length} ShouldInject 断言通过");
 
 // 自动粘贴调度（mock 注入器记录调用次数，不真正发键）
 int pasteCalls = 0;
-var scheduler = new AutoPasteScheduler(() => { pasteCalls++; return true; }, action => action());   // 同步执行器
-scheduler.AfterWrite(false, true, 0);    // 写入失败 -> 不调
-scheduler.AfterWrite(true, false, 0);    // 开关关 -> 不调
-scheduler.AfterWrite(true, true, 0);     // 触发一次
+var scheduler = new AutoPasteScheduler(() => { pasteCalls++; return true; }, _ => true, action => action());   // 同步执行器
+scheduler.AfterWrite(false, true, 0, false, null);    // 写入失败 -> 不调
+scheduler.AfterWrite(true, false, 0, false, null);    // 开关关 -> 不调
+scheduler.AfterWrite(true, true, 0, false, null);     // 触发一次
 bool schedOk = pasteCalls == 1;
 Console.WriteLine(schedOk ? "PASS  调度：失败/关闭不注入，成功注入恰好一次" : $"FAIL  调度: pasteCalls={pasteCalls}");
 
 // 异步执行器路径：只捕获动作，不执行（延迟等待不发生在判定线程）
 Action? pending = null;
-var scheduler2 = new AutoPasteScheduler(() => true, action => pending = action);
-scheduler2.AfterWrite(true, true, 5000);
+var scheduler2 = new AutoPasteScheduler(() => true, _ => true, action => pending = action);
+scheduler2.AfterWrite(true, true, 5000, false, null);
 bool asyncOk = pending != null;
 Console.WriteLine(asyncOk ? "PASS  调度：非零延迟交给执行器异步等待" : "FAIL  调度: 未调度延迟动作");
-pending?.Invoke();   // 补执行：确认动作本身可跑（Thread.Sleep(5000) 后注入）——注入器为 mock，不真正发键
+scheduler2.Dispose();
+pending?.Invoke();   // 退出后执行器若被调度，也应立即返回，不再注入
+var cancelledCalls = 0;
+Action? cancelledPaste = null;
+var cancelScheduler = new AutoPasteScheduler(() => { cancelledCalls++; return true; }, _ => true, action => cancelledPaste = action);
+cancelScheduler.AfterWrite(true, true, 5000, false, null);
+cancelScheduler.Dispose();
+cancelledPaste?.Invoke();
+bool cancelledPasteOk = cancelledCalls == 0;
+Console.WriteLine(cancelledPasteOk ? "PASS  退出取消：延迟粘贴不注入" : "FAIL  退出取消：延迟粘贴仍注入");
+
+var injectionOrder = new List<string>();
+var clickScheduler = new AutoPasteScheduler(
+    () => { injectionOrder.Add("paste"); return true; },
+    position => { injectionOrder.Add($"click:{position.X},{position.Y}"); return true; },
+    action => action());
+var target = new System.Drawing.Point(-100, 200);
+clickScheduler.AfterWrite(false, true, 0, true, target);
+clickScheduler.AfterWrite(true, true, 0, true, null);
+clickScheduler.AfterWrite(true, false, 0, true, target);
+clickScheduler.AfterWrite(true, true, 0, true, target);
+bool clickOrderOk = injectionOrder.SequenceEqual(new[] { "click:-100,200", "click:-100,200", "paste" });
+Console.WriteLine(clickOrderOk ? "PASS  自动点击：写入成功才执行、先点击再粘贴" : "FAIL  自动点击：执行顺序或次数错误");
+var failedClickPasteCalls = 0;
+var failedClickScheduler = new AutoPasteScheduler(() => { failedClickPasteCalls++; return true; }, _ => false, action => action());
+failedClickScheduler.AfterWrite(true, true, 0, true, target);
+bool failedClickOk = failedClickPasteCalls == 0;
+Console.WriteLine(failedClickOk ? "PASS  自动点击失败后跳过粘贴" : "FAIL  自动点击失败仍发送粘贴");
+var canceledClickCalls = 0;
+Action? canceledClick = null;
+var cancelClickScheduler = new AutoPasteScheduler(() => true, _ => { canceledClickCalls++; return true; }, action => canceledClick = action);
+cancelClickScheduler.AfterWrite(true, false, 5000, true, target);
+cancelClickScheduler.Dispose();
+canceledClick?.Invoke();
+bool canceledClickOk = canceledClickCalls == 0;
+Console.WriteLine(canceledClickOk ? "PASS  退出取消：待发点击不注入" : "FAIL  退出取消：待发点击仍注入");
+var staleClickCalls = 0;
+var pendingClicks = new List<Action>();
+var staleScheduler = new AutoPasteScheduler(() => true, _ => { staleClickCalls++; return true; }, pendingClicks.Add);
+staleScheduler.AfterWrite(true, false, 0, true, target);
+staleScheduler.AfterWrite(true, false, 0, true, target);
+pendingClicks.ForEach(action => action());
+bool staleClickOk = staleClickCalls == 1;
+Console.WriteLine(staleClickOk ? "PASS  新码覆盖旧码：旧的待发点击不执行" : "FAIL  新码覆盖旧码：待发点击重复执行");
 
 // Ctrl+V 序列组装：Ctrl↓ V↓ V↑ Ctrl↑，全部带 scancode 标志
 var seq = KeyboardInjector.BuildCtrlVSequence();
@@ -124,8 +167,192 @@ Console.WriteLine(seqOk ? "PASS  Ctrl+V 序列组装（scancode 模式）" : "FA
 
 // 配置默认值：自动粘贴默认关闭、零延迟
 var defCfg = new AppConfig();
-bool cfgOk = !defCfg.AutoPasteEnabled && defCfg.AutoPasteDelayMs == 0;
+bool cfgOk = !defCfg.AutoPasteEnabled && defCfg.AutoPasteDelayMs == 0 && !defCfg.AutoClickEnabled && defCfg.AutoClickPosition is null;
 Console.WriteLine(cfgOk ? "PASS  配置默认值：自动粘贴关闭、延迟 0" : $"FAIL  配置默认值: {defCfg.AutoPasteEnabled}, {defCfg.AutoPasteDelayMs}");
 
+// 统一配置：非法值逐字段夹取，缺失字段用属性默认值，保存后可重新加载
+var dirtyCfg = new AppConfig
+{
+    CooldownSeconds = -5,
+    ConfirmFrames = 99,
+    CaptureIntervalMs = 1,
+    ScaleFactor = 20,
+    ClipboardClearSeconds = 9000,
+    AutoPasteDelayMs = -10,
+    AutoClickEnabled = true,
+    AutoClickPosition = new System.Drawing.Point(50000, 0),
+    MonitorRoom = "  https://live.douyin.com/123  ",
+    MonitorIntervalSeconds = 0,
+    SpeedThresholdMs = 999999,
+    SpeedRate = double.NaN,
+    JumpThresholdMs = -1,
+};
+dirtyCfg.Sanitize();
+bool sanitizeOk = dirtyCfg.CooldownSeconds == 0
+    && dirtyCfg.ConfirmFrames == 4
+    && dirtyCfg.CaptureIntervalMs == 10
+    && dirtyCfg.ScaleFactor == 6
+    && dirtyCfg.ClipboardClearSeconds == 3600
+    && dirtyCfg.AutoPasteDelayMs == 0
+    && !dirtyCfg.AutoClickEnabled && dirtyCfg.AutoClickPosition is null
+    && dirtyCfg.MonitorRoom == "https://live.douyin.com/123"
+    && dirtyCfg.MonitorIntervalSeconds == AppConfig.MinMonitorIntervalSeconds
+    && dirtyCfg.SpeedThresholdMs == AppConfig.MaxSpeedThresholdMs
+    && dirtyCfg.SpeedRate == 1.1
+    && dirtyCfg.JumpThresholdMs == 1;
+Console.WriteLine(sanitizeOk ? "PASS  统一配置：非法值夹取" : "FAIL  统一配置：非法值夹取");
+
+var configRoundTripPath = Path.Combine(Path.GetTempPath(), "RoomCodeGrabberTests", $"config-{Guid.NewGuid():N}.json");
+var savedCfg = new AppConfig
+{
+    MonitorRoom = "456",
+    MonitorIntervalSeconds = 21,
+    CatchupEnabled = false,
+    SpeedThresholdMs = 750,
+    SpeedRate = 1.25,
+    JumpThresholdMs = null,
+    AutoClickEnabled = true,
+    AutoClickPosition = target,
+};
+savedCfg.SaveTo(configRoundTripPath);
+var loadedCfg = AppConfig.LoadFrom(configRoundTripPath);
+bool configRoundTripOk = loadedCfg.MonitorRoom == "456"
+    && loadedCfg.MonitorIntervalSeconds == 21
+    && !loadedCfg.CatchupEnabled
+    && loadedCfg.SpeedThresholdMs == 750
+    && loadedCfg.SpeedRate == 1.25
+    && loadedCfg.JumpThresholdMs == null
+    && loadedCfg.AutoClickEnabled && loadedCfg.AutoClickPosition == target;
+Console.WriteLine(configRoundTripOk ? "PASS  统一配置：保存并重新加载" : "FAIL  统一配置：保存并重新加载");
+
+var secretConfig = new AppConfig();
+var credentialStore = new ProtectedCredentialStore(secretConfig);
+const string fakeCredential = "ttwid=fixture-only-value";
+credentialStore.Set(fakeCredential);
+var storedJson = System.Text.Json.JsonSerializer.Serialize(secretConfig);
+var statusJson = System.Text.Json.JsonSerializer.Serialize(credentialStore.ToStatus());
+bool credentialOk = credentialStore.IsConfigured
+    && credentialStore.Get() == fakeCredential
+    && !storedJson.Contains(fakeCredential, StringComparison.Ordinal)
+    && !statusJson.Contains(fakeCredential, StringComparison.Ordinal)
+    && statusJson.Contains("\"credentialConfigured\":true", StringComparison.Ordinal);
+credentialStore.Clear();
+credentialOk = credentialOk && !credentialStore.IsConfigured && credentialStore.Get() == null;
+Console.WriteLine(credentialOk ? "PASS  凭据：DPAPI 往返、明文不落盘、清除" : "FAIL  凭据：DPAPI 往返、明文不落盘、清除");
+
+// WebView2 消息协议：版本、类型、字段范围和 URL 都在进入原生动作前校验
+var bridgeCases = new (string name, string json, bool want)[]
+{
+    ("合法监测命令", """{"version":1,"type":"monitor.start","payload":{"room":"123","intervalSec":15,"credential":null}}""", true),
+    ("合法手动播放", """{"version":1,"type":"playback.manual-start","payload":{"url":"https://cdn.example/live.flv?sign=x"}}""", true),
+    ("损坏 JSON", "{", false),
+    ("错误版本", """{"version":2,"type":"monitor.stop","payload":{}}""", false),
+    ("未知类型", """{"version":1,"type":"system.exec","payload":{}}""", false),
+    ("非法间隔", """{"version":1,"type":"monitor.start","payload":{"room":"123","intervalSec":0}}""", false),
+    ("非 FLV 地址", """{"version":1,"type":"playback.manual-start","payload":{"url":"https://example.com/page"}}""", false),
+    ("倍率越界", """{"version":1,"type":"playback.settings","payload":{"catchupEnabled":true,"speedThresholdMs":1000,"speedRate":3,"jumpThresholdMs":2000}}""", false),
+    ("记录光标命令", """{"version":1,"type":"capture.cursor.record","payload":{}}""", true),
+};
+int bridgePass = 0;
+foreach (var (name, json, want) in bridgeCases)
+{
+    var got = BridgeProtocol.TryParseCommand(json, out _, out _);
+    if (got == want) { bridgePass++; Console.WriteLine($"PASS  协议：{name}"); }
+    else Console.WriteLine($"FAIL  协议：{name}, got={got}, want={want}");
+}
+bool bridgeEventOk = false;
+bool unknownEventRejected = false;
+try
+{
+    var eventJson = BridgeProtocol.SerializeEvent("capture.code", new { code = "ASD123", latencyMs = 42 });
+    bridgeEventOk = eventJson.Contains("\"version\":1") && eventJson.Contains("ASD123");
+    BridgeProtocol.SerializeEvent("unknown.event", new { });
+}
+catch (ArgumentOutOfRangeException)
+{
+    unknownEventRejected = true;
+}
+bridgeEventOk = bridgeEventOk && unknownEventRejected;
+Console.WriteLine(bridgeEventOk ? "PASS  协议：出站事件白名单" : "FAIL  协议：出站事件白名单");
+
+var roomCases = new (string? input, bool ok, string? room)[]
+{
+    ("134525032676", true, "134525032676"),
+    (" https://live.douyin.com/999?from=web ", true, "999"),
+    ("", false, null),
+    (null, false, null),
+    ("https://v.douyin.com/abc/", false, null),
+    ("https://example.com/123", false, null),
+    ("https://fake-douyin.com/123", false, null),
+};
+bool roomInputOk = roomCases.All(test =>
+{
+    var result = RoomPageParser.NormalizeRoom(test.input);
+    return result.Ok == test.ok && result.Room == test.room;
+});
+
+const string livePage = """x\"flv_pull_url\":{\"FULL_HD1\":\"http://cdn/x_uhd.flv?expire=1\u0026sign=f912\",\"HD1\":\"http://cdn/x_hd.flv?x=1\"}y""";
+var liveResult = RoomPageParser.Parse(livePage);
+var fallbackResult = RoomPageParser.Parse("""x\"flv_pull_url\":{\"SD1\":\"http://cdn/x_sd.flv?k=1\"}y""");
+bool roomPageOk = liveResult.Ok && liveResult.Live && liveResult.BestUrl == "http://cdn/x_uhd.flv?expire=1&sign=f912"
+    && liveResult.FlvUrls.Count == 2
+    && fallbackResult.Live && fallbackResult.BestUrl == "http://cdn/x_sd.flv?k=1"
+    && RoomPageParser.Parse(livePage + "\\\"status\\\":4").Live
+    && RoomPageParser.Parse("""...\"status\":4,\"room_id_str\":\"1\"...""") is { Ok: true, Live: false }
+    && RoomPageParser.Parse("<title>验证码中间页</title>" ).Reason == "captcha"
+    && RoomPageParser.Parse("<body>unknown format</body>") is { Ok: false, Live: false }
+    && RoomPageParser.Parse("""x\"flv_pull_url\":{\"HD1\":\"http://cdn/x.html\"}y""") is { Ok: false, Live: false }
+    && RoomPageParser.Parse(null).Reason == "empty";
+Console.WriteLine(roomInputOk && roomPageOk ? "PASS  房间号/页面解析：与 JavaScript 夹具语义一致" : "FAIL  房间号/页面解析");
+bool monitorOk = await MonitorServiceTests.RunAsync();
+bool monitorBridgeOk = await MonitorBridgeTests.RunAsync();
+var selectCount = 0;
+var toggleCount = 0;
+var running = false;
+var captureSelectJson = """{"version":1,"type":"capture.select","payload":{}}""";
+var captureToggleJson = """{"version":1,"type":"capture.toggle","payload":{"enabled":true}}""";
+BridgeProtocol.TryParseCommand(captureSelectJson, out var selectCommand, out _);
+BridgeProtocol.TryParseCommand(captureToggleJson, out var toggleCommand, out _);
+bool captureHostOk = selectCommand is not null && toggleCommand is not null
+    && CaptureHostCommands.TryDispatch(selectCommand, () => running, () => selectCount++, () => toggleCount++)
+    && CaptureHostCommands.TryDispatch(toggleCommand, () => running, () => selectCount++, () => toggleCount++)
+    && selectCount == 1 && toggleCount == 1;
+running = true;
+captureHostOk &= CaptureHostCommands.TryDispatch(toggleCommand!, () => running, () => selectCount++, () => toggleCount++) && toggleCount == 1;
+Console.WriteLine(captureHostOk ? "PASS  宿主抓取命令：框选、幂等切换" : "FAIL  宿主抓取命令");
+using var copiedEvent = System.Text.Json.JsonDocument.Parse(CaptureBridgeEvents.Copied("ASD123", 42.5));
+using var failedEvent = System.Text.Json.JsonDocument.Parse(CaptureBridgeEvents.ClipboardFailure());
+bool capturePayloadOk = copiedEvent.RootElement.GetProperty("type").GetString() == "capture.code"
+    && copiedEvent.RootElement.GetProperty("payload").GetProperty("code").GetString() == "ASD123"
+    && copiedEvent.RootElement.GetProperty("payload").GetProperty("latencyMs").GetDouble() == 42.5
+    && failedEvent.RootElement.GetProperty("type").GetString() == "app.error"
+    && !failedEvent.RootElement.GetProperty("payload").TryGetProperty("code", out _);
+Console.WriteLine(capturePayloadOk ? "PASS  抓码事件：成功含延迟，失败不冒充已复制" : "FAIL  抓码事件");
+
+var settingsConfig = new AppConfig();
+bool playbackSettingsOk = BridgeProtocol.TryParseCommand("""{"version":1,"type":"playback.settings","payload":{"catchupEnabled":false,"speedThresholdMs":850,"speedRate":1.35,"jumpThresholdMs":null}}""", out var playbackCommand, out _);
+bool captureSettingsOk = BridgeProtocol.TryParseCommand("""{"version":1,"type":"capture.settings","payload":{"captureIntervalMs":40,"confirmFrames":2,"cooldownSeconds":10,"scaleFactor":4,"grabOnStart":false,"ocrEngine":1,"soundEnabled":false,"clipboardClearSeconds":0,"autoPasteEnabled":true,"autoClickEnabled":true,"autoPasteDelayMs":350}}""", out var settingsCommand, out _);
+bool invalidSettingsRejected = !BridgeProtocol.TryParseCommand("""{"version":1,"type":"capture.settings","payload":{"captureIntervalMs":40,"confirmFrames":2,"cooldownSeconds":10,"scaleFactor":4,"grabOnStart":false,"ocrEngine":2,"soundEnabled":false,"clipboardClearSeconds":0,"autoPasteEnabled":true,"autoClickEnabled":true,"autoPasteDelayMs":350}}""", out _, out _);
+settingsConfig.AutoClickPosition = target;
+if (playbackSettingsOk && captureSettingsOk)
+{
+    UnifiedSettingsCommands.ApplyPlayback(settingsConfig, playbackCommand!);
+    UnifiedSettingsCommands.ApplyCapture(settingsConfig, settingsCommand!);
+    var settingsPath = Path.Combine(Path.GetTempPath(), "RoomCodeGrabberTests", $"settings-{Guid.NewGuid():N}.json");
+    settingsConfig.SaveTo(settingsPath);
+    settingsConfig = AppConfig.LoadFrom(settingsPath);
+}
+bool settingsRestartOk = playbackSettingsOk && captureSettingsOk && invalidSettingsRejected
+    && !settingsConfig.CatchupEnabled && settingsConfig.SpeedThresholdMs == 850
+    && settingsConfig.SpeedRate == 1.35 && settingsConfig.JumpThresholdMs is null
+    && settingsConfig.CaptureIntervalMs == 40 && settingsConfig.ConfirmFrames == 2
+    && settingsConfig.CooldownSeconds == 10 && settingsConfig.ScaleFactor == 4
+    && !settingsConfig.GrabOnStart && settingsConfig.OcrEngine == OcrEngineKind.Paddle
+    && !settingsConfig.SoundEnabled && settingsConfig.ClipboardClearSeconds == 0
+    && settingsConfig.AutoPasteEnabled && settingsConfig.AutoPasteDelayMs == 350
+    && settingsConfig.AutoClickEnabled && settingsConfig.AutoClickPosition == target;
+Console.WriteLine(settingsRestartOk ? "PASS  设置：消息验证、应用并在重启后恢复" : "FAIL  设置：消息验证或重启恢复");
+
 Environment.Exit(fail == 0 && dupOk && grabOk && scPass == scCases.Length && fireOk
-    && apPass == apCases.Length && schedOk && asyncOk && seqOk && cfgOk ? 0 : 1);
+    && apPass == apCases.Length && schedOk && asyncOk && cancelledPasteOk && clickOrderOk && failedClickOk && canceledClickOk && staleClickOk && seqOk && cfgOk && sanitizeOk && configRoundTripOk && credentialOk
+    && bridgePass == bridgeCases.Length && bridgeEventOk && roomInputOk && roomPageOk && monitorOk && monitorBridgeOk && captureHostOk && capturePayloadOk && settingsRestartOk ? 0 : 1);

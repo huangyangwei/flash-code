@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#15191a" />
+    <title>Flash Code · 直播工作台</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">F</span>
+          <div class="brand-copy">
+            <strong>Flash Code</strong>
+            <span>直播工作台</span>
+          </div>
+        </div>
+        <div class="topbar-status" role="status" aria-live="polite">
+          <span class="status-dot" id="host-dot"></span>
+          <span id="host-state">正在连接客户端</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="playback-column" aria-labelledby="playback-heading">
+          <div class="section-heading">
+            <div class="heading-title">
+              <h1 id="playback-heading">直播画面</h1>
+              <span id="playback-badge" class="state-pill">待播放</span>
+            </div>
+            <div class="playback-metrics" aria-live="polite">
+              <span id="watermark">缓冲 -- ms</span>
+              <span class="metric-separator" aria-hidden="true"></span>
+              <span id="playback-action">正常播放</span>
+            </div>
+          </div>
+
+          <div class="video-frame" id="video-frame">
+            <video id="video" controls playsinline muted aria-label="直播视频"></video>
+            <div class="video-empty" id="video-empty">
+              <div class="empty-icon"><i data-lucide="radio-tower" aria-hidden="true"></i></div>
+              <strong>尚未接入直播流</strong>
+              <span>监测到开播后自动播放，或手动输入 FLV 地址</span>
+            </div>
+          </div>
+
+          <form class="manual-form" id="manual-form">
+            <label for="url-input">手动播放 FLV</label>
+            <div class="input-action-row">
+              <input id="url-input" type="url" inputmode="url" placeholder="https://.../live.flv" spellcheck="false" autocomplete="off" />
+              <button class="primary-button" type="submit" id="play-btn" aria-label="播放 FLV"><i data-lucide="play" aria-hidden="true"></i><span>播放</span></button>
+            </div>
+            <p id="manual-error" class="field-error" role="alert" hidden></p>
+          </form>
+
+          <div class="lower-band">
+            <div class="lower-heading"><h2>最近识别</h2><span id="capture-meta">等待画面</span></div>
+            <div class="code-readout" aria-live="polite">
+              <span id="last-code" class="code-value">------</span>
+              <span id="code-latency" class="latency-value">-- ms</span>
+              <button id="clear-clipboard" class="subtle-button" type="button" title="清空剪贴板"><i data-lucide="clipboard-x" aria-hidden="true"></i><span>清空剪贴板</span></button>
+            </div>
+            <p id="capture-message" class="capture-message">选择码出现的画面区域后开始抓取。</p>
+          </div>
+        </section>
+
+        <aside class="control-rail" aria-label="直播与抓码控制">
+          <section class="rail-section" aria-labelledby="monitor-heading">
+            <div class="rail-heading">
+              <div><h2 id="monitor-heading">开播监测</h2><p id="monitor-summary">未监测</p></div>
+              <span id="monitor-dot" class="rail-indicator" aria-hidden="true"></span>
+            </div>
+            <form id="monitor-form" class="control-form" novalidate>
+              <label for="room-input">抖音直播间</label>
+              <input id="room-input" type="text" placeholder="直播间链接或房间号" autocomplete="off" spellcheck="false" />
+              <div class="form-grid">
+                <label for="monitor-interval">轮询间隔 <span>秒</span></label>
+                <input id="monitor-interval" type="number" min="1" max="300" value="15" inputmode="numeric" />
+              </div>
+              <label for="credential-input">Cookie <span class="optional">选填</span></label>
+              <div class="credential-row">
+                <input id="credential-input" type="password" placeholder="用于通过房间验证" autocomplete="off" />
+                <button id="clear-credential" class="icon-button" type="button" title="清除已保存 Cookie" aria-label="清除已保存 Cookie"><i data-lucide="x" aria-hidden="true"></i></button>
+              </div>
+              <span id="credential-state" class="minor-text">未保存 Cookie</span>
+              <button id="monitor-toggle" type="submit" class="rail-button"><i data-lucide="radio" aria-hidden="true"></i><span>开始监测</span></button>
+            </form>
+            <p id="monitor-detail" class="rail-detail" role="status" aria-live="polite">等待配置直播间</p>
+          </section>
+
+          <section class="rail-section" aria-labelledby="capture-heading">
+            <div class="rail-heading">
+              <div><h2 id="capture-heading">房间码抓取</h2><p id="capture-summary">未选择区域</p></div>
+              <span id="capture-dot" class="rail-indicator" aria-hidden="true"></span>
+            </div>
+            <div class="capture-buttons">
+              <button type="button" id="select-region" class="rail-button"><i data-lucide="scan-line" aria-hidden="true"></i><span>框选画面区域</span></button>
+              <button type="button" id="capture-toggle" class="outline-button"><i data-lucide="play" aria-hidden="true"></i><span>开始抓取</span></button>
+            </div>
+            <p id="region-detail" class="rail-detail">OCR：Windows OCR · 区域：--</p>
+            <details class="ocr-debug"><summary>OCR 调试</summary><pre id="ocr-output" aria-label="最近 OCR 文本">等待画面</pre></details>
+          </section>
+
+          <section class="rail-section settings-section" aria-labelledby="settings-heading">
+            <details id="settings-details">
+              <summary id="settings-summary"><span><i data-lucide="sliders-horizontal" aria-hidden="true"></i><strong id="settings-heading">播放与抓取设置</strong></span><i data-lucide="chevron-down" aria-hidden="true"></i></summary>
+              <div class="settings-body">
+                <fieldset>
+                  <legend>追帧</legend>
+                  <label class="toggle-row" for="catchup-enabled"><span>自动追帧</span><input id="catchup-enabled" type="checkbox" checked /></label>
+                  <label class="number-row" for="speed-threshold"><span>变速阈值 <small>ms</small></span><input id="speed-threshold" type="number" min="0" max="60000" step="100" value="1000" /></label>
+                  <label class="number-row" for="speed-rate"><span>播放倍率 <small>1.05 - 2.0</small></span><input id="speed-rate" type="number" min="1.05" max="2" step="0.05" value="1.1" /></label>
+                  <label class="toggle-row" for="jump-enabled"><span>超限跳帧</span><input id="jump-enabled" type="checkbox" checked /></label>
+                  <label class="number-row" for="jump-threshold"><span>跳帧阈值 <small>ms</small></span><input id="jump-threshold" type="number" min="1" max="120000" step="100" value="2000" /></label>
+                </fieldset>
+                <fieldset>
+                  <legend>识别与剪贴板</legend>
+                  <label class="number-row" for="capture-interval"><span>抓帧间隔 <small>ms</small></span><input id="capture-interval" type="number" min="10" max="200" value="20" /></label>
+                  <label class="number-row" for="confirm-frames"><span>确认帧数</span><input id="confirm-frames" type="number" min="1" max="4" value="1" /></label>
+                  <label class="number-row" for="cooldown-seconds"><span>同码冷却 <small>秒</small></span><input id="cooldown-seconds" type="number" min="0" max="600" value="30" /></label>
+                  <label class="number-row" for="scale-factor"><span>OCR 放大</span><input id="scale-factor" type="number" min="2" max="6" value="3" /></label>
+                  <label class="toggle-row" for="grab-on-start"><span>启动即抓</span><input id="grab-on-start" type="checkbox" checked /></label>
+                  <label class="number-row" for="ocr-engine"><span>OCR 引擎</span><select id="ocr-engine"><option value="0">Windows OCR</option><option value="1">PaddleOCR (GPU)</option></select></label>
+                  <label class="toggle-row" for="sound-enabled"><span>抓码提示音</span><input id="sound-enabled" type="checkbox" checked /></label>
+                  <label class="number-row" for="clear-seconds"><span>自动清空 <small>秒</small></span><input id="clear-seconds" type="number" min="0" max="3600" value="180" /></label>
+                  <label class="toggle-row" for="auto-paste"><span>抓到后自动粘贴</span><input id="auto-paste" type="checkbox" /></label>
+                  <label class="toggle-row" for="auto-click"><span>抓到后自动点击</span><input id="auto-click" type="checkbox" disabled /></label>
+                  <div class="cursor-row"><button id="record-cursor" type="button" class="outline-button" disabled><i data-lucide="crosshair" aria-hidden="true"></i><span>记录光标位置</span></button><output id="cursor-position" aria-live="polite">未记录</output></div>
+                  <label class="number-row" for="paste-delay"><span>执行延迟 <small>ms</small></span><input id="paste-delay" type="number" min="0" max="10000" value="0" /></label>
+                </fieldset>
+              </div>
+            </details>
+          </section>
+        </aside>
+      </main>
+
+      <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+      <dialog id="error-dialog" class="error-dialog" aria-labelledby="error-title">
+        <div class="dialog-icon"><i data-lucide="triangle-alert" aria-hidden="true"></i></div>
+        <h2 id="error-title">播放中断</h2>
+        <p id="error-message"></p>
+        <form id="retry-form">
+          <label for="retry-url">新的 FLV 地址</label>
+          <input id="retry-url" type="url" spellcheck="false" autocomplete="off" placeholder="https://.../live.flv" />
+          <div class="dialog-actions">
+            <button id="dismiss-error" type="button" class="outline-button">关闭</button>
+            <button type="submit" class="primary-button"><i data-lucide="rotate-cw" aria-hidden="true"></i><span>恢复播放</span></button>
+          </div>
+        </form>
+      </dialog>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

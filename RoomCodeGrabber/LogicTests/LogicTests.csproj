@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
@@ -10,11 +11,21 @@
     <Compile Include="..\ClipboardClearPolicy.cs" Link="ClipboardClearPolicy.cs" />
     <Compile Include="..\AutoPastePolicy.cs" Link="AutoPastePolicy.cs" />
     <Compile Include="..\AutoPasteScheduler.cs" Link="AutoPasteScheduler.cs" />
+    <Compile Include="..\CursorClickInjector.cs" Link="CursorClickInjector.cs" />
     <Compile Include="..\KeyboardInjector.cs" Link="KeyboardInjector.cs" />
     <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
+    <Compile Include="..\BridgeProtocol.cs" Link="BridgeProtocol.cs" />
+    <Compile Include="..\ProtectedCredentialStore.cs" Link="ProtectedCredentialStore.cs" />
+    <Compile Include="..\RoomPageParser.cs" Link="RoomPageParser.cs" />
+    <Compile Include="..\LiveMonitorService.cs" Link="LiveMonitorService.cs" />
+    <Compile Include="..\MonitorBridge.cs" Link="MonitorBridge.cs" />
+    <Compile Include="..\CaptureHostCommands.cs" Link="CaptureHostCommands.cs" />
+    <Compile Include="..\CaptureBridgeEvents.cs" Link="CaptureBridgeEvents.cs" />
+    <Compile Include="..\UnifiedSettingsCommands.cs" Link="UnifiedSettingsCommands.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- AppConfig 依赖 System.Drawing.Rectangle（Region 属性），net8.0 需显式引用 -->
     <PackageReference Include="System.Drawing.Primitives" Version="4.3.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 </Project>

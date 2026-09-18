@@ -12,11 +12,13 @@ public sealed class CaptureEngine : IDisposable
 {
     /// <summary>抓到新码并已写入剪贴板。(码, 实测延迟ms)。从抓帧线程触发。</summary>
     public event Action<string, double>? CodeGrabbed;
+    /// <summary>本轮新码未能写入剪贴板，不得作为已复制码发布。</summary>
+    public event Action? ClipboardWriteFailed;
     /// <summary>调试：本帧 OCR 原文。从抓帧线程触发。</summary>
     public event Action<string>? OcrDebug;
 
     private readonly AppConfig _config;
-    private readonly CodeDetector _detector;
+    private CodeDetector _detector;
     private readonly AutoPasteScheduler _paste;
     private Thread? _thread;
     private volatile bool _running;
@@ -27,7 +29,7 @@ public sealed class CaptureEngine : IDisposable
     public string? InitWarning { get; private set; }
 
     // 可复用缓冲
-    private readonly Preprocessor _preprocessor;
+    private Preprocessor _preprocessor;
     private Bitmap? _captureBmp;
     private byte[]? _prevGray;      // 上一帧快照（变化检测用）
     private List<string> _prevCodes = new();
@@ -37,7 +39,7 @@ public sealed class CaptureEngine : IDisposable
         _config = config;
         _preprocessor = new Preprocessor(config.ScaleFactor);
         _detector = new CodeDetector(config.CooldownSeconds, config.ConfirmFrames, config.GrabOnStart);
-        _paste = new AutoPasteScheduler(SendPasteWithLog, static action => Task.Run(action));
+        _paste = new AutoPasteScheduler(SendPasteWithLog, ClickWithLog, static action => Task.Run(action));
         InitOcr();
     }
 
@@ -46,6 +48,13 @@ public sealed class CaptureEngine : IDisposable
     {
         if (KeyboardInjector.SendCtrlV()) return true;
         OcrDebug?.Invoke("[自动粘贴] Ctrl+V 注入失败（Ctrl 正被按住或被系统拒绝）");
+        return false;
+    }
+
+    private bool ClickWithLog(Point position)
+    {
+        if (CursorClickInjector.ClickAt(position)) return true;
+        OcrDebug?.Invoke("[自动点击] 坐标不可用、按键未释放或系统拒绝；已跳过本次粘贴");
         return false;
     }
 
@@ -129,7 +138,7 @@ public sealed class CaptureEngine : IDisposable
         // Loop 会在当前帧处理完后检查 _running 退出；Paddle 单帧可达数百 ms，给足 10s。
         bool exited = t.Join(TimeSpan.FromSeconds(10));
         if (exited) _thread = null;   // 确认退出才清引用；未退出则保留，供 Start() 拒绝启动
-        ResetDetectorState();
+        if (exited) ResetDetectorState();
         return exited;
     }
 
@@ -150,22 +159,28 @@ public sealed class CaptureEngine : IDisposable
     /// <summary>按当前配置重建 OCR 引擎（切换引擎后即时生效，无需重启）。</summary>
     public void ReinitializeOcr()
     {
-        bool wasRunning = _running;
+        Reconfigure(() => { });
+    }
 
-        // 关键顺序：先确认抓帧线程已退出，再 dispose 引擎——否则线程可能仍停在 Recognize()
-        // 内使用它（use-after-dispose）。超时未退出则放弃本次切换，避免原生资源竞态。
+    public bool Reconfigure(Action updateConfig)
+    {
+        bool wasRunning = _running;
         if (!StopThread())
         {
-            InitError = "抓帧线程未能在超时内停止，已取消本次 OCR 引擎切换（请重试）。";
-            return;
+            InitError = "抓帧线程未能在超时内停止，设置未应用（请重试）。";
+            return false;
         }
-
+        updateConfig();
         _ocr?.Dispose();
         _ocr = null;
+        _preprocessor.Dispose();
+        _preprocessor = new Preprocessor(_config.ScaleFactor);
+        _detector = new CodeDetector(_config.CooldownSeconds, _config.ConfirmFrames, _config.GrabOnStart);
         InitError = null;
         InitWarning = null;
         InitOcr();
         if (wasRunning && InitError == null) Start();
+        return true;
     }
 
     private void Loop()
@@ -249,9 +264,16 @@ public sealed class CaptureEngine : IDisposable
         var trigger = _detector.Analyze(codes);
         if (trigger == null) return;
         bool written = ClipboardService.SetTextWithAutoClear(trigger, _config.ClipboardClearSeconds);
+        if (!written)
+        {
+            ClipboardWriteFailed?.Invoke();
+            return;
+        }
         CodeGrabbed?.Invoke(trigger, sw.Elapsed.TotalMilliseconds);
         // 延迟等待在 Task.Run 后台线程，抓帧循环不被阻塞
-        _paste.AfterWrite(written, _config.AutoPasteEnabled, _config.AutoPasteDelayMs);
+        lock (_config)
+            _paste.AfterWrite(true, _config.AutoPasteEnabled, _config.AutoPasteDelayMs,
+                _config.AutoClickEnabled, _config.AutoClickPosition);
     }
 
     private bool IsSameFrame(byte[] gray)
@@ -281,12 +303,17 @@ public sealed class CaptureEngine : IDisposable
 
     public void Dispose()
     {
+        _paste.Dispose();
         // 线程已退出才释放引擎（含 PaddleOCR 的 CUDA 上下文）；未退出则宁可不释放，也不冒竞态风险
         if (StopThread())
         {
             _ocr?.Dispose();
             _ocr = null;
+            _preprocessor.Dispose();
+            _captureBmp?.Dispose();
+            _captureBmp = null;
         }
-        _captureBmp?.Dispose();
     }
+
+    public void CancelPendingPaste() => _paste.Dispose();
 }

@@ -14,8 +14,7 @@ internal static class Program
         var config = AppConfig.Load();
         using var engine = new CaptureEngine(config);
 
-        Application.Run(new MainForm(config, engine));
-
-        ClipboardService.Shutdown();   // 释放自动清空定时器，避免残留回调
+        try { Application.Run(new MainForm(config, engine)); }
+        finally { ClipboardService.Shutdown(); }
     }
 }
