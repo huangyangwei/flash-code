@@ -45,9 +45,20 @@ try {
     }));
     if (await page.locator('#host-state').textContent() !== '客户端已连接') throw new Error('Host init was not rendered');
 
+    const layout = await page.evaluate(() => {
+      const playback = document.querySelector('.playback-column').getBoundingClientRect();
+      const controls = document.querySelector('.control-rail').getBoundingClientRect();
+      const monitor = document.querySelector('[aria-labelledby="monitor-heading"]').getBoundingClientRect();
+      const capture = document.querySelector('[aria-labelledby="capture-heading"]').getBoundingClientRect();
+      return { playbackBottom: playback.bottom, controlsTop: controls.top, monitorTop: monitor.top, captureTop: capture.top };
+    });
+    if (layout.controlsTop < layout.playbackBottom - 1) throw new Error(`Controls are not below playback: ${JSON.stringify(layout)}`);
+    if (width > 710 && Math.abs(layout.monitorTop - layout.captureTop) > 1) throw new Error(`Desktop controls are not aligned: ${JSON.stringify(layout)}`);
+    if (width <= 710 && layout.captureTop <= layout.monitorTop) throw new Error(`Narrow controls did not stack: ${JSON.stringify(layout)}`);
+
     const output = join(outputDir, `client-${width}-${runId}.png`);
     if (existsSync(output)) throw new Error(`Screenshot already exists: ${output}`);
-    await page.screenshot({ path: output, fullPage: width === 390 });
+    await page.screenshot({ path: output, fullPage: true });
     const metrics = await page.evaluate(() => ({ viewport: innerWidth, content: document.documentElement.scrollWidth, tabOrder: document.querySelector('#play-btn')?.getAttribute('aria-label') }));
     if (metrics.content > metrics.viewport) throw new Error(`${width}px has horizontal overflow: ${JSON.stringify(metrics)}`);
     if (metrics.tabOrder !== '播放 FLV') throw new Error('Play button has no accessible name');
